@@ -5,6 +5,7 @@ SnipeZilla Srcds Manager has been restarting crashed game servers on Windows, qu
 It installs, updates, runs and watches Source, Source 2 and GoldSrc servers (CS2, CS:S, CS 1.6, TF2, L4D2, GMod, DoD:S, HL2DM and more), from a web page. It is **one file**, `szm.exe` on Windows or `szm` on Linux: no PHP, no web server, no database to install.
 
 **Download:** [snipezilla.com](https://snipezilla.com). the ready-to-run program.
+
 **Source code:** [github.com](https://github.com/SnipeZilla/szm). This repository holds the source code.
 
 ## The same job, still done right
