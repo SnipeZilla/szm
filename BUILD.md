@@ -71,12 +71,14 @@ It runs `tools/mkres`, plain Go, nothing to install. `szm-gobuild.bat` does it b
 1. Change the version in `cmd/szm/main.go`.
 2. Build both (`szm-gobuild.bat`, **Both**) and run the tests.
 3. Try the new `szm.exe` on a test machine, or with `-data test-data` as above.
-4. Write down each file's checksum, so people can check their download:
+4. Write down each file's checksum, so people can check their download: double-click `szm-sha256.bat`. It writes `SHA256SUMS.txt` (upload it next to the files, or paste the numbers under the download links). By hand:
 
    ```
    certutil -hashfile szm.exe SHA256        (Windows)
    sha256sum szm                            (Linux)
    ```
+
+   On Linux, `sha256sum -c SHA256SUMS.txt` checks the downloaded files against it.
 
 5. Post `szm.exe` and `szm` on the forum, with the version, what changed and the checksums.
 6. Commit, tag and push (below):
@@ -161,4 +163,5 @@ With **GitHub Desktop**, the same is buttons: the changed files are listed, writ
 | `deploy/iis/web.config` | IIS in front of szm (also in [INSTALL.md](INSTALL.md#iis-windows)). |
 | `deploy/linux/szm.service` | systemd on Linux (also in [INSTALL.md](INSTALL.md#linux)). |
 | `szm-gobuild.bat` | The build menu (Windows). |
+| `szm-sha256.bat` | Writes `SHA256SUMS.txt`, the checksums of `szm.exe` and `szm`, for a release. |
 | `szm-service.bat` | A menu for the Windows service: install, start, stop, restart… Keep it next to `szm.exe`. |
