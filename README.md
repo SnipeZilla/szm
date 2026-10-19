@@ -24,6 +24,7 @@ What made 1.x worth running is all here, working the way it did:
 
 ## What is new
 
+- **Shared copy replaces xcopy.** Each game is downloaded once, into a shared copy, while every server keeps running. Then each server stops only for the moment it takes to copy in what changed, and its `server.cfg`, `mapcycle.txt` and the like are never overwritten. Ten CS2 servers are up to date within minutes, from a single download.
 - **Crash reports that recognize the pattern.** Each crash says what most likely caused it (the plugin or module, the map, what changed just before), so debugging stops being guesswork.
 - **Hub and nodes:** one page for all your machines, Windows and Linux, anywhere ([below](#hub-and-nodes)).
 - **Addons manager:** Metamod, SourceMod, CounterStrikeSharp and AMX Mod X kept as packages, and pushed into the servers without touching their configs or the plugins you removed.
