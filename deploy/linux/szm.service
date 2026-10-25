@@ -1,0 +1,30 @@
+# SnipeZilla Server Manager on Linux, as a systemd service.
+#
+#   sudo useradd -r -m -d /opt/szm szm                 (a user of its own: the game servers run as it)
+#   sudo cp szm /opt/szm/ && sudo chown -R szm:szm /opt/szm
+#   sudo cp szm.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now szm
+#
+# Logs: journalctl -u szm -f. Restart after replacing the program: sudo systemctl restart szm
+# The game servers keep running when the manager stops or restarts (KillMode=process).
+
+[Unit]
+Description=SnipeZilla Server Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=szm
+Group=szm
+WorkingDirectory=/opt/szm
+ExecStart=/opt/szm/szm -data /opt/szm
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=65536
+# The network of each server is counted by reading the packets' headers: Linux allows it with this right only.
+# szm takes it off the game servers it starts.
+AmbientCapabilities=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

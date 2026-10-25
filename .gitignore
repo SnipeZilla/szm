@@ -1,0 +1,26 @@
+# Built program, and its checksums (made for each release)
+*.bat
+*.exe
+/szm
+/SHA256SUMS.txt
+
+# What the manager writes next to itself: passwords, tokens, logs
+szm.json
+users.json
+links.json
+state.json
+setup-code.txt
+szm.log
+szm.log.old
+logs/
+steamcmd/
+cache/
+servers/
+games.json
+/backups/
+/crashes/
+/addons/
+/icons/
+/rclone/
+/test-data/
+!internal/games/games.json

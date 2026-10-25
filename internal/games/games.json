@@ -1,0 +1,447 @@
+{
+  "_comment": "Games the manager can install and run. Copy this file next to szm.exe as games.json to add or change one: an entry there replaces the built-in one with the same key. engine: goldsrc, source or source2. appid: the game on Steam (version check, artwork); server_appid: the dedicated server steamcmd installs. game: the mod folder (-game). exe: the server program, the first that exists is used. args: the default command line ({game} {ip} {port} {maxplayers} {map} are filled in; an option whose value is empty is left out). version_file: where steam.inf is. console_log: where -condebug writes the console. config: the main config file. maps: where the maps are, and their extensions. icon: a picture of the web interface (internal/web/static/games/<icon>.png, the icons of HLstatsZ).",
+  "games": {
+    "cs16": {
+      "name": "Counter-Strike 1.6", "short": "CS 1.6", "icon": "cstrike", "engine": "goldsrc", "appid": 10, "server_appid": 90,
+      "game": "cstrike", "app_set_config": "90 mod cstrike",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "de_dust2", "default_maxplayers": 32
+    },
+    "czero": {
+      "name": "Counter-Strike: Condition Zero", "short": "CS:CZ", "icon": "cstrike", "engine": "goldsrc", "appid": 80, "server_appid": 90,
+      "game": "czero", "app_set_config": "90 mod czero",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "de_dust2_cz", "default_maxplayers": 32
+    },
+    "tfc": {
+      "name": "Team Fortress Classic", "short": "TFC", "icon": "tfc", "engine": "goldsrc", "appid": 20, "server_appid": 90,
+      "game": "tfc", "app_set_config": "90 mod tfc",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "2fort", "default_maxplayers": 24
+    },
+    "dod": {
+      "name": "Day of Defeat", "short": "DoD", "icon": "dod", "engine": "goldsrc", "appid": 30, "server_appid": 90,
+      "game": "dod", "app_set_config": "90 mod dod",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "dod_anzio", "default_maxplayers": 24
+    },
+    "dmc": {
+      "name": "Deathmatch Classic", "short": "DMC", "engine": "goldsrc", "appid": 40, "server_appid": 90,
+      "game": "dmc", "app_set_config": "90 mod dmc",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "dcdm5", "default_maxplayers": 16
+    },
+    "ricochet": {
+      "name": "Ricochet", "short": "Ricochet", "engine": "goldsrc", "appid": 60, "server_appid": 90,
+      "game": "ricochet", "app_set_config": "90 mod ricochet",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "rc_arena", "default_maxplayers": 16
+    },
+    "hldm": {
+      "name": "Half-Life Deathmatch", "short": "HLDM", "icon": "valve", "engine": "goldsrc", "appid": 70, "server_appid": 90,
+      "game": "valve",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "crossfire", "default_maxplayers": 16
+    },
+    "css": {
+      "name": "Counter-Strike: Source", "short": "CS:S", "icon": "css", "engine": "source", "appid": 240, "server_appid": 232330,
+      "game": "cstrike",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_64", "srcds_run"] },
+      "default_map": "de_dust2", "default_maxplayers": 24
+    },
+    "dods": {
+      "name": "Day of Defeat: Source", "short": "DoD:S", "icon": "dods", "engine": "source", "appid": 300, "server_appid": 232290,
+      "game": "dod",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_64", "srcds_run"] },
+      "default_map": "dod_anzio", "default_maxplayers": 24
+    },
+    "hl2dm": {
+      "name": "Half-Life 2: Deathmatch", "short": "HL2DM", "icon": "hl2mp", "engine": "source", "appid": 320, "server_appid": 232370,
+      "game": "hl2mp",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_64", "srcds_run"] },
+      "default_map": "dm_lockdown", "default_maxplayers": 16
+    },
+    "hldms": {
+      "name": "Half-Life Deathmatch: Source", "short": "HLDM:S", "icon": "valve", "engine": "source", "appid": 360, "server_appid": 255470,
+      "game": "hl1mp",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "crossfire", "default_maxplayers": 16
+    },
+    "tf2": {
+      "name": "Team Fortress 2", "short": "TF2", "icon": "tf", "engine": "source", "appid": 440, "server_appid": 232250,
+      "game": "tf",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_64", "srcds_run"] },
+      "default_map": "ctf_2fort", "default_maxplayers": 24
+    },
+    "l4d": {
+      "name": "Left 4 Dead", "short": "L4D", "icon": "l4d", "engine": "source", "appid": 500, "server_appid": 222840,
+      "game": "left4dead",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "l4d_hospital01_apartment", "default_maxplayers": 4
+    },
+    "l4d2": {
+      "name": "Left 4 Dead 2", "short": "L4D2", "icon": "l4d2", "engine": "source", "appid": 550, "server_appid": 222860,
+      "game": "left4dead2",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "c1m1_hotel", "default_maxplayers": 8
+    },
+    "cs2": {
+      "name": "Counter-Strike 2", "short": "CS2", "icon": "cs2", "engine": "source2", "appid": 730, "server_appid": 730,
+      "game": "csgo", "game_dir": "game/csgo", "metamod": true, "console_capture": true,
+      "exe": { "windows": ["game/bin/win64/cs2.exe"], "linux": ["game/cs2.sh", "game/bin/linuxsteamrt64/cs2"] },
+      "default_map": "de_dust2", "default_maxplayers": 32
+    },
+    "csgo": {
+      "name": "Counter-Strike: Global Offensive", "short": "CS:GO", "icon": "csgo", "engine": "source", "appid": 730, "server_appid": 740,
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_x64", "srcds_run"] },
+      "game": "csgo",
+      "default_map": "de_dust2", "default_maxplayers": 32
+    },
+    "gmod": {
+      "name": "Garry's Mod", "short": "GMod", "engine": "source", "appid": 4000, "server_appid": 4020,
+      "game": "garrysmod",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_x64", "srcds_run"] },
+      "default_map": "gm_construct", "default_maxplayers": 16
+    },
+    "insurgency": {
+      "name": "Insurgency (2014)", "short": "INS", "icon": "insmod", "engine": "source", "appid": 222880, "server_appid": 237410,
+      "game": "insurgency",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "ministry", "default_maxplayers": 32
+    },
+    "nmrih": {
+      "name": "No More Room in Hell", "short": "NMRiH", "engine": "source", "appid": 224260, "server_appid": 317670,
+      "game": "nmrih",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "nmo_broadway", "default_maxplayers": 8
+    },
+    "synergy": {
+      "name": "Synergy", "short": "Synergy", "engine": "source", "appid": 17520, "server_appid": 17525,
+      "game": "synergy",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "d1_trainstation_01", "default_maxplayers": 8
+    },
+    "aoc": {
+      "name": "Age of Chivalry", "short": "AoC", "engine": "source", "appid": 17510, "server_appid": 17515,
+      "game": "ageofchivalry",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "aocffa_moor", "default_maxplayers": 32
+    },
+    "pvkii": {
+      "name": "Pirates, Vikings and Knights II", "short": "PVKII", "engine": "source", "appid": 17570, "server_appid": 17575,
+      "game": "pvkii",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "bt_island",
+      "default_maxplayers": 32
+    },
+    "empires": {
+      "name": "Empires Mod", "short": "Empires", "engine": "source", "appid": 17740, "server_appid": 460040,
+      "game": "empires",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "emp_cyclopean", "default_maxplayers": 64
+    },
+    "zps": {
+      "name": "Zombie Panic! Source", "short": "ZPS", "engine": "source", "appid": 17500, "server_appid": 17505,
+      "game": "zps",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "zpo_biotec", "default_maxplayers": 24
+    },
+    "fof": {
+      "name": "Fistful of Frags", "short": "FoF", "engine": "source", "appid": 265630, "server_appid": 295230,
+      "game": "fistful_of_frags",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "fof_robertlee", "default_maxplayers": 24
+    },
+    "contagion": {
+      "name": "Contagion", "short": "Contagion", "engine": "source", "appid": 238430, "server_appid": 238430,
+      "game": "contagion",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "ce_roanoke", "default_maxplayers": 8
+    },
+    "brainbread2": {
+      "name": "BrainBread 2", "short": "BB2", "engine": "source", "appid": 346330, "server_appid": 475370,
+      "game": "brainbread2",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "bb2_harvest", "default_maxplayers": 8
+    },
+    "blade": {
+      "name": "Blade Symphony", "short": "Blade", "engine": "source", "appid": 225600, "server_appid": 228780,
+      "game": "berimbau", "login": true,
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "duel_airtemple", "default_maxplayers": 16
+    },
+    "neotokyo": {
+      "name": "NEOTOKYO", "short": "NEO", "engine": "source", "appid": 244630, "server_appid": 313600,
+      "game": "neotokyo",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "nt_rise", "default_maxplayers": 24
+    },
+    "doi": {
+      "name": "Day of Infamy", "short": "DoI", "engine": "source", "appid": 447820, "server_appid": 462310,
+      "game": "doi",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "dod_anzio", "default_maxplayers": 32
+    },
+    "nucleardawn": {
+      "name": "Nuclear Dawn", "short": "ND", "engine": "source", "appid": 17710, "server_appid": 111710,
+      "game": "nucleardawn",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "gate", "default_maxplayers": 32
+    },
+    "diprip": {
+      "name": "D.I.P.R.I.P.", "short": "DIPRIP", "engine": "source", "appid": 17530, "server_appid": 17535,
+      "game": "diprip",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "diprip_depot", "default_maxplayers": 16
+    },
+    "insmod": {
+      "name": "Insurgency: Modern Infantry Combat", "short": "InsMod", "engine": "source", "appid": 17700, "server_appid": 17705,
+      "game": "insurgency",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "sinjar", "default_maxplayers": 32
+    },
+    "gearbox": {
+      "name": "Half-Life: Opposing Force", "short": "OP4", "icon": "gearbox", "engine": "goldsrc", "appid": 50, "server_appid": 90,
+      "game": "gearbox", "app_set_config": "90 mod gearbox",
+      "exe": { "windows": ["hlds.exe"], "linux": ["hlds_run"] },
+      "default_map": "op4_bootcamp", "default_maxplayers": 16
+    },
+    "svencoop": {
+      "name": "Sven Co-op", "short": "Sven", "icon": "svencoop", "engine": "goldsrc", "appid": 225840, "server_appid": 276060,
+      "game": "svencoop",
+      "exe": { "windows": ["svends.exe"], "linux": ["svends_run"] },
+      "default_map": "svencoop1", "default_maxplayers": 16
+    },
+    "bms": {
+      "name": "Black Mesa: Deathmatch", "short": "BMDM", "icon": "bms", "engine": "source", "appid": 362890, "server_appid": 346680,
+      "game": "bms",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "dm_bounce", "default_maxplayers": 16
+    },
+    "reactivedrop": {
+      "name": "Alien Swarm: Reactive Drop", "short": "RD", "icon": "reactivedrop", "engine": "source", "appid": 563560, "server_appid": 582400,
+      "game": "reactivedrop",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"] },
+      "default_map": "lobby", "default_maxplayers": 8
+    },
+    "ff": {
+      "name": "Fortress Forever", "short": "FF", "icon": "ff", "engine": "source", "appid": 253530, "server_appid": 329710,
+      "game": "FortressForever",
+      "exe": { "windows": ["srcds.exe"], "linux": ["srcds_run"] },
+      "default_map": "ff_2fort", "default_maxplayers": 24
+    },
+    "vietnam": {
+      "name": "Military Conflict: Vietnam", "short": "MCV", "icon": "vietnam", "engine": "source", "appid": 1012110, "server_appid": 1136190,
+      "game": "vietnam",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_x64", "srcds_run"] },
+      "args": ["-console", "-game", "{game}", "-usercon", "-ip", "{ip}", "-port", "{port}", "-maxplayers_override", "{maxplayers}", "-nobreakpad", "+map", "{map}"],
+      "default_map": "mcv_siege", "default_maxplayers": 32
+    },
+    "dab": {
+      "name": "Double Action: Boogaloo", "short": "DA:B", "icon": "dab", "engine": "source", "appid": 317360, "server_appid": 317800,
+      "game": "dab",
+      "exe": { "windows": ["srcds.exe"], "linux": ["dabds.sh", "srcds_run"] },
+      "default_map": "da_rooftops", "default_maxplayers": 10
+    },
+    "dystopia": {
+      "name": "Dystopia", "short": "Dystopia", "icon": "dystopia", "engine": "source", "appid": 17580, "server_appid": 17585,
+      "game": "dystopia",
+      "exe": { "windows": ["srcds.exe", "bin/srcds.exe"], "linux": ["bin/srcds_run.sh", "srcds_run"] },
+      "default_map": "dys_broadcast", "default_maxplayers": 16
+    },
+    "jbmod": {
+      "name": "JBMod", "short": "JBMod", "icon": "jbmod", "engine": "source", "appid": 2158860, "server_appid": 2181210,
+      "game": "jbmod",
+      "exe": { "windows": ["srcds_win64.exe", "srcds.exe"], "linux": ["srcds_run_64", "srcds_run"] },
+      "default_map": "jb_buildingblocks", "default_maxplayers": 24
+    },
+    "rust": {
+      "name": "Rust", "short": "Rust", "engine": "other", "appid": 252490, "server_appid": 258550,
+      "exe": { "windows": ["RustDedicated.exe"], "linux": ["RustDedicated"] },
+      "env": { "LD_LIBRARY_PATH": "{dir}/RustDedicated_Data/Plugins/x86_64:{dir}/RustDedicated_Data/Plugins:{dir}" },
+      "args": ["-batchmode", "-nographics", "+server.ip", "{ip}", "+server.port", "{port}", "+server.queryport", "{queryport}",
+        "+server.hostname", "{name}", "+server.identity", "rust", "+server.maxplayers", "{maxplayers}", "+server.level", "{map}",
+        "+server.worldsize", "3500", "+server.saveinterval", "300", "+rcon.port", "{rconport}", "+rcon.password", "{rcon_password}",
+        "+rcon.web", "1", "-logfile", "{logfile}"],
+      "query": "try", "query_offset": 2, "rcon": "webrcon", "rcon_offset": 1, "stop": ["quit"], "say": "say {text}", "stop_wait": 180,
+      "console_log": "logs/server.log", "config": "server/rust/cfg/server.cfg", "ports": 3, "default_port": 28015,
+      "default_map": "Procedural Map", "default_maxplayers": 100,
+      "notes": "Its world and its settings are in server/rust (server.cfg in its cfg folder). Its RCON is its port + 1, its query port + 2; the Rust+ app port is its port + 67."
+    },
+    "sdtd": {
+      "name": "7 Days to Die", "short": "7DTD", "engine": "other", "appid": 251570, "server_appid": 294420,
+      "exe": { "windows": ["7DaysToDieServer.exe"], "linux": ["7DaysToDieServer.x86_64"] },
+      "env": { "LD_LIBRARY_PATH": "{dir}" },
+      "args": ["-quit", "-batchmode", "-nographics", "-dedicated", "-configfile=serverconfig.xml", "-ServerPort={port}",
+        "-ServerName={name}", "-ServerPassword={password}", "-ServerMaxPlayerCount={maxplayers}",
+        "-TelnetEnabled=true", "-TelnetPort={rconport}", "-TelnetPassword={rcon_password}", "-logfile", "{logfile}"],
+      "query": "try", "rcon": "telnet", "rcon_offset": -18819, "stop": ["shutdown"], "say": "say \"{text}\"", "stop_wait": 180,
+      "console_log": "logs/server.log", "config": "serverconfig.xml", "ports": 3, "default_port": 26900,
+      "default_maxplayers": 8,
+      "notes": "Its other settings are in serverconfig.xml (those of its command line win: name, port, password). Its saves are in the user's folder (AppData\\Roaming\\7DaysToDie on Windows). Its telnet (the RCON the manager uses) is port 8081 for a first server."
+    },
+    "valheim": {
+      "name": "Valheim", "short": "Valheim", "engine": "other", "appid": 892970, "server_appid": 896660,
+      "exe": { "windows": ["valheim_server.exe"], "linux": ["valheim_server.x86_64"] },
+      "env": { "LD_LIBRARY_PATH": "{dir}/linux64", "SteamAppId": "892970" },
+      "args": ["-nographics", "-batchmode", "-name", "{name}", "-port", "{port}", "-world", "{map}", "-password", "{password}",
+        "-public", "1", "-logFile", "{logfile}"],
+      "query": "try", "query_offset": 1, "rcon": "none", "stop_wait": 120,
+      "console_log": "logs/server.log", "ports": 2, "default_port": 2456,
+      "default_map": "Dedicated", "default_maxplayers": 10,
+      "notes": "A join password is needed: 5 characters at least, not part of its name. Its worlds are in the user's folder (AppData\\LocalLow\\IronGate\\Valheim on Windows). Stopped with Ctrl+C, which saves."
+    },
+    "ark": {
+      "name": "ARK: Survival Evolved", "short": "ARK", "engine": "other", "appid": 346110, "server_appid": 376030,
+      "exe": { "windows": ["ShooterGame/Binaries/Win64/ShooterGameServer.exe"], "linux": ["ShooterGame/Binaries/Linux/ShooterGameServer"] },
+      "args": ["{map}?listen?SessionName={name}?ServerPassword={password}?ServerAdminPassword={rcon_password}?Port={port}?QueryPort={queryport}?RCONEnabled=True?RCONPort={rconport}?MaxPlayers={maxplayers}",
+        "-server", "-log"],
+      "query": "try", "query_offset": 19238, "rcon": "source", "rcon_offset": 19243, "stop": ["saveworld", "DoExit"], "say": "ServerChat {text}", "stop_wait": 180,
+      "console_log": "ShooterGame/Saved/Logs/ShooterGame.log", "config": "ShooterGame/Saved/Config/{os}Server/GameUserSettings.ini",
+      "ports": 2, "default_port": 7777, "default_map": "TheIsland", "default_maxplayers": 70,
+      "notes": "Its saves and settings are in ShooterGame/Saved. Its query port is 27015 and its RCON 27020 for a first server (port 7777)."
+    },
+    "palworld": {
+      "name": "Palworld", "short": "Palworld", "engine": "other", "appid": 1623730, "server_appid": 2394010,
+      "exe": { "windows": ["Pal/Binaries/Win64/PalServer-Win64-Shipping-Cmd.exe", "Pal/Binaries/Win64/PalServer-Win64-Shipping.exe"], "linux": ["Pal/Binaries/Linux/PalServer-Linux-Shipping"] },
+      "args": ["-port={port}", "-publicport={port}", "-players={maxplayers}", "-servername={name}", "-serverpassword={password}",
+        "-adminpassword={rcon_password}", "-useperfthreads", "-NoAsyncLoadingThread", "-UseMultithreadForDS"],
+      "args_os": { "linux": ["Pal", "-port={port}", "-publicport={port}", "-players={maxplayers}", "-servername={name}", "-serverpassword={password}",
+        "-adminpassword={rcon_password}", "-useperfthreads", "-NoAsyncLoadingThread", "-UseMultithreadForDS"] },
+      "query": "try", "query_offset": 18804, "rcon": "source", "rcon_offset": 17364, "stop": ["Save", "DoExit"], "say": "Broadcast {text}", "stop_wait": 120,
+      "console_log": "logs/console.log", "console_capture": true, "config": "Pal/Saved/Config/{os}Server/PalWorldSettings.ini",
+      "default_port": 8211, "default_maxplayers": 32,
+      "notes": "Its world settings are in Pal/Saved/Config. Its RCON (port 25575, the manager's way to save and stop it) is on when RCONEnabled=True is in PalWorldSettings.ini; else it is stopped with Ctrl+C."
+    },
+    "pz": {
+      "name": "Project Zomboid", "short": "PZ", "engine": "other", "appid": 108600, "server_appid": 380870,
+      "exe": { "windows": ["ProjectZomboid64.exe"], "linux": ["ProjectZomboid64"] },
+      "env": { "LD_LIBRARY_PATH": "{dir}/linux64:{dir}/natives:{dir}:{dir}/jre64/lib/amd64", "PATH": "{dir}/jre64/bin" },
+      "args": ["-servername", "servertest", "-port", "{port}", "-udpport", "{queryport}", "-adminpassword", "{rcon_password}"],
+      "query": "none", "query_offset": 1, "rcon": "none", "stop_wait": 120,
+      "console_log": "logs/console.log", "console_capture": true, "ports": 2, "default_port": 16261, "default_maxplayers": 16,
+      "notes": "Its settings and saves are in the Zomboid folder of the user the manager runs as (Zomboid/Server/servertest.ini). Its admin password is the RCON password here."
+    },
+    "sandstorm": {
+      "name": "Insurgency: Sandstorm", "short": "Sandstorm", "engine": "other", "appid": 581320, "server_appid": 581330,
+      "exe": { "windows": ["Insurgency/Binaries/Win64/InsurgencyServer-Win64-Shipping.exe"], "linux": ["Insurgency/Binaries/Linux/InsurgencyServer-Linux-Shipping"] },
+      "args": ["{map}?Scenario=Scenario_Crossing_Checkpoint_Insurgents?MaxPlayers={maxplayers}", "-Port={port}", "-QueryPort={queryport}",
+        "-hostname={name}", "-GSLTToken={gslt}", "-Rcon", "-RconPassword={rcon_password}", "-RconListenPort={rconport}", "-log"],
+      "query": "try", "query_offset": 29, "rcon": "source", "rcon_offset": 1, "say": "say {text}", "stop_wait": 120,
+      "console_log": "Insurgency/Saved/Logs/Insurgency.log", "config": "Insurgency/Saved/Config/{os}Server/Game.ini",
+      "default_port": 27102, "default_map": "Canyon", "default_maxplayers": 28,
+      "notes": "A game server login token (app 581320) lists it on the internet. Its scenario is in its command line (Games page)."
+    },
+    "squad": {
+      "name": "Squad", "short": "Squad", "engine": "other", "appid": 393380, "server_appid": 403240,
+      "exe": { "windows": ["SquadGame/Binaries/Win64/SquadGameServer.exe"], "linux": ["SquadGame/Binaries/Linux/SquadGameServer"] },
+      "args": ["Port={port}", "QueryPort={queryport}", "-log"],
+      "args_os": { "linux": ["SquadGame", "Port={port}", "QueryPort={queryport}"] },
+      "query": "try", "query_offset": 19378, "rcon": "none", "stop_wait": 120,
+      "console_log": "SquadGame/Saved/Logs/SquadGame.log", "config": "SquadGame/ServerConfig/Server.cfg",
+      "default_port": 7787, "default_maxplayers": 100,
+      "notes": "Its settings are in SquadGame/ServerConfig. A second server needs another beacon port (15000 by default): -beaconport=15001 in its options."
+    },
+    "unturned": {
+      "name": "Unturned", "short": "Unturned", "engine": "other", "appid": 304930, "server_appid": 1110390,
+      "exe": { "windows": ["Unturned.exe"], "linux": ["Unturned_Headless.x86_64"] },
+      "env": { "LD_LIBRARY_PATH": "{dir}/Unturned_Headless_Data/Plugins/x86_64" },
+      "args": ["-batchmode", "-nographics", "-port", "{port}", "-GSLT", "{gslt}", "-Name", "{name}", "-Password", "{password}", "+InternetServer/{map}"],
+      "query": "try", "query_offset": 1, "rcon": "none", "stop_wait": 60,
+      "console_log": "logs/console.log", "console_capture": true, "ports": 2, "default_port": 27015,
+      "default_map": "Server", "default_maxplayers": 24,
+      "notes": "Its settings are in Servers/<its folder>/Server/Commands.dat: the map field here is that folder's name."
+    },
+    "conan": {
+      "name": "Conan Exiles", "short": "Conan", "engine": "other", "appid": 440900, "server_appid": 443030,
+      "exe": { "windows": ["ConanSandbox/Binaries/Win64/ConanSandboxServer-Win64-Shipping.exe"], "linux": ["ConanSandbox/Binaries/Linux/ConanSandboxServer-Linux-Shipping"] },
+      "args": ["-Port={port}", "-QueryPort={queryport}", "-RconPort={rconport}", "-ServerName={name}", "-ServerPassword={password}", "-log"],
+      "args_os": { "linux": ["ConanSandbox", "-Port={port}", "-QueryPort={queryport}", "-RconPort={rconport}", "-ServerName={name}", "-ServerPassword={password}", "-log"] },
+      "query": "try", "query_offset": 19238, "rcon": "source", "rcon_offset": 17798, "stop_wait": 120,
+      "console_log": "ConanSandbox/Saved/Logs/ConanSandbox.log", "config": "ConanSandbox/Saved/Config/{os}Server/ServerSettings.ini",
+      "ports": 2, "default_port": 7777, "default_maxplayers": 40,
+      "notes": "Its settings are in ConanSandbox/Saved/Config. Its RCON (the Console tab) needs RconEnabled and a RconPassword in its Game.ini; it is stopped with Ctrl+C, which saves."
+    },
+    "vrising": {
+      "name": "V Rising", "short": "V Rising", "engine": "other", "appid": 1604030, "server_appid": 1829350,
+      "exe": { "windows": ["VRisingServer.exe"] },
+      "args": ["-persistentDataPath", "{dir}/save-data", "-serverName", "{name}", "-saveName", "world1", "-gamePort", "{port}", "-queryPort", "{queryport}",
+        "-maxUsers", "{maxplayers}", "-password", "{password}", "-logFile", "{logfile}"],
+      "query": "try", "query_offset": 1, "rcon": "none", "stop_wait": 120,
+      "console_log": "logs/VRisingServer.log", "config": "save-data/Settings/ServerGameSettings.json",
+      "ports": 2, "default_port": 9876, "default_maxplayers": 40,
+      "notes": "Windows only. Its settings and saves are in save-data (Settings: ServerHostSettings.json, ServerGameSettings.json)."
+    },
+    "enshrouded": {
+      "name": "Enshrouded", "short": "Enshrouded", "engine": "other", "appid": 1203620, "server_appid": 2278520,
+      "exe": { "windows": ["enshrouded_server.exe"] },
+      "query": "try", "query_offset": 1, "rcon": "none", "stop_wait": 120,
+      "console_log": "logs/enshrouded_server.log", "config": "enshrouded_server.json",
+      "ports": 2, "default_port": 15636, "default_maxplayers": 16,
+      "notes": "Windows only. Its name, password and ports are in enshrouded_server.json (created at its first start): keep the port there the same as here."
+    },
+    "satisfactory": {
+      "name": "Satisfactory", "short": "Satisfactory", "engine": "other", "appid": 526870, "server_appid": 1690800,
+      "exe": { "windows": ["FactoryServer.exe"], "linux": ["Engine/Binaries/Linux/FactoryServer-Linux-Shipping"] },
+      "args": ["-Port={port}", "-log", "-unattended"],
+      "args_os": { "linux": ["FactoryGame", "-Port={port}"] },
+      "query": "none", "rcon": "none", "stop_wait": 120,
+      "console_log": "logs/console.log", "console_capture": true, "default_port": 7777, "default_maxplayers": 4,
+      "notes": "Its name, admin password and settings are set from the game (Server Manager). It also takes TCP port 8888 (-ReliablePort=… in its options for a second server)."
+    },
+    "kf2": {
+      "name": "Killing Floor 2", "short": "KF2", "engine": "other", "appid": 232090, "server_appid": 232130,
+      "exe": { "windows": ["Binaries/Win64/KFServer.exe"], "linux": ["Binaries/Win64/KFGameSteamServer.bin.x86_64"] },
+      "args": ["{map}?Port={port}?QueryPort={queryport}?AdminPassword={rcon_password}?GamePassword={password}?MaxPlayers={maxplayers}"],
+      "query": "try", "query_offset": 19238, "rcon": "none", "stop_wait": 60,
+      "console_log": "KFGame/Logs/Launch.log", "config": "KFGame/Config/PCServer-KFGame.ini",
+      "default_port": 7777, "default_map": "KF-BioticsLab", "default_maxplayers": 6,
+      "notes": "Its settings are in KFGame/Config. Its admin password is the RCON password here (web admin: WebAdmin in KFWeb.ini)."
+    },
+    "dayz": {
+      "name": "DayZ", "short": "DayZ", "engine": "other", "appid": 221100, "server_appid": 223350, "login": true,
+      "exe": { "windows": ["DayZServer_x64.exe"], "linux": ["DayZServer"] },
+      "args": ["-port={port}", "-profiles=profiles", "-config=serverDZ.cfg", "-dologs", "-adminlog", "-netlog", "-freezecheck"],
+      "query": "try", "query_offset": 24714, "rcon": "battleye", "rcon_offset": 3, "stop": ["#shutdown"], "say": "say -1 {text}", "stop_wait": 120,
+      "rcon_config": {
+        "profiles/BattlEye/BEServer_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"],
+        "profiles/BattlEye/beserver_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"]
+      },
+      "config": "serverDZ.cfg", "ports": 4, "default_port": 2302, "default_maxplayers": 60,
+      "notes": "Its download needs a Steam account (any one, with Steam Guard, open steam guard to confirm): set it as its Steam login. Its name, password and query port (steamQueryPort, 27016) are in serverDZ.cfg; its logs in profiles. Its RCON is BattlEye's (UDP, its port + 3: 2305): with an RCON password (letters and numbers, 24 at most), the manager sets it in profiles/BattlEye/BEServer_x64.cfg as it starts, with RestrictRCon 0, and stops it with #shutdown (BattlEye opens it once the server has finished loading)."
+    },
+    "arma2oa": {
+      "name": "Arma 2: Operation Arrowhead", "short": "Arma 2 OA", "engine": "other", "appid": 33930, "server_appid": 33935, "login": true,
+      "exe": { "windows": ["arma2oaserver.exe"] },
+      "args": ["-port={port}", "-config=server.cfg", "-profiles=profiles", "-name=server"],
+      "query": "try", "query_offset": 1, "rcon": "battleye", "rcon_offset": 5, "stop": ["#shutdown"], "say": "say -1 {text}", "stop_wait": 60,
+      "rcon_config": { "profiles/BattlEye/BEServer.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"] },
+      "config": "server.cfg", "config_new": ["hostname = \"{name}\";", "maxPlayers = {maxplayers};", "persistent = 1;", "BattlEye = 1;"],
+      "console_log": "profiles/arma2oaserver.RPT", "ports": 6, "default_port": 2302, "default_maxplayers": 32,
+      "notes": "Windows only. Its download needs a Steam account (with Steam Guard, open steam guard to confirm): set it as its Steam login; steamcmd may refuse one that does not own Arma 2: Operation Arrowhead. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its log is profiles/arma2oaserver.RPT. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in profiles/BattlEye/BEServer.cfg as it starts, and stops it with #shutdown."
+    },
+    "arma3": {
+      "name": "Arma 3", "short": "Arma 3", "engine": "other", "appid": 107410, "server_appid": 233780, "login": true,
+      "exe": { "windows": ["arma3server_x64.exe"], "linux": ["arma3server_x64"] },
+      "args": ["-port={port}", "-config=server.cfg", "-profiles=profiles", "-name=server"],
+      "query": "try", "query_offset": 1, "rcon": "battleye", "rcon_offset": 5, "stop": ["#shutdown"], "say": "say -1 {text}", "stop_wait": 60,
+      "rcon_config": {
+        "profiles/BattlEye/BEServer_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"],
+        "profiles/BattlEye/beserver_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"],
+        "battleye/launch/beserver_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"]
+      },
+      "config": "server.cfg", "config_new": ["hostname = \"{name}\";", "maxPlayers = {maxplayers};", "persistent = 1;", "BattlEye = 1;"],
+      "ports": 6, "default_port": 2302, "default_maxplayers": 32,
+      "notes": "Its download needs a Steam account (with Steam Guard, open steam guard to confirm): set it as its Steam login. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its logs (.rpt) in profiles. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in BattlEye's BEServer_x64.cfg as it starts, and stops it with #shutdown."
+    },
+    "bo3": {
+      "name": "Call of Duty: Black Ops III", "short": "BO3", "engine": "other", "appid": 311210, "server_appid": 545990,
+      "exe": { "windows": ["UnrankedServer/BlackOps3_UnrankedDedicatedServer.exe", "BlackOps3_UnrankedDedicatedServer.exe"] },
+      "args": ["+set", "net_port", "{port}", "+set", "sv_playlist", "1", "+set", "logfile", "2", "+set", "live_steam_server_name", "{name}",
+        "+set", "live_steam_server_password", "{password}", "+set", "rcon_password", "{rcon_password}"],
+      "query": "try", "rcon": "none", "stop_wait": 30,
+      "config": "zone/server.cfg", "default_port": 27017, "default_maxplayers": 18,
+      "notes": "Windows only: the unranked dedicated server. Its playlists are in machinecfg/playlists.info; its RCON is for Black Ops III's Remote Console tool."
+    }
+  }
+}
