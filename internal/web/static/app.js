@@ -954,8 +954,8 @@ function pageDashboard() {
         h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span', { class: 'tag blue' }, icon('download'), 'steamcmd'),
           h('b', { class: 'grow ellipsis' }, steam.label), h('span', { class: 'muted small' }, (steam.state || 'working') + (pct ? ' · ' + pct + '%' : ''))),
         h('div', { class: 'bar striped' }, h('i', { style: `width:${Math.max(pct, 3)}%` })),
-        steam.prompt === 'approve'
-          ? h('div', { class: 'note warn', style: 'margin-top:8px' }, h('b', null, 'Approve the login in the Steam app now'), ': the shield (Steam Guard) at the bottom of the app, then Approve. steamcmd waits about a minute.')
+        steam.prompt
+          ? h('div', { class: 'note warn', style: 'margin-top:8px' }, steam.prompt === 'approve' ? [h('b', null, 'Approve the login in the Steam app now'), ': the shield at the bottom of the app, then Approve. steamcmd waits about a minute.'] : [h('b', null, 'Logging in to Steam. '), 'If Steam asks: approve the login in the Steam app, or wait for the code it emails (it is asked here once steamcmd stops).'])
           : h('div', { class: 'row wrap small', style: 'gap:6px 18px;margin-top:8px;color:var(--text-2)' }, steamFacts(steam))));
     } else clear(banner);
     sub.textContent = list.length ? `${list.length} server${list.length > 1 ? 's' : ''} · ${up} running · ${pl} player${pl === 1 ? '' : 's'} online` : '';
@@ -1411,7 +1411,7 @@ function tabSetup(id) {
       if (other) {
         // its name, password, ports are its command line's: the server's settings
         swap(form,
-          g.notes ? h('div', { class: 'note info small wide', style: 'padding:8px 10px;border-radius:8px' }, g.notes) : null,
+          g.notes ? h('div', { class: 'note info small wide', style: 'padding:8px 10px;border-radius:8px;white-space:pre-line' }, g.notes) : null,
           field('Name players see', bindText(f, 'name', { maxlength: 80 }), 'Its name in the manager, and in the server browser.', true),
           g.password ? field('Password to join', h('div', { class: 'inputgroup' }, ...secret(f, 'password')), 'Empty: anyone can join.') : null,
           field('IP', ipPicker(f), 'The address players join it at.'),
@@ -1464,7 +1464,7 @@ function tabSetup(id) {
       const mine = st && st.label && st.label.includes(v.name);
       const pct = mine ? Math.round(st.percent || 0) : 0;
       const gname = (S.gamesBy[v.game] || {}).name || 'the game';
-      if (mine && st.prompt === 'approve') patch(dl, approveNow(v));
+      if (mine && st.prompt) patch(dl, approveNow(v, st.prompt));
       else patch(dl, h('div', { class: 'row', style: 'gap:10px' }, h('span', { class: 'spin' }),
           h('b', { class: 'grow' }, mine ? steamStage(st.state) + ' ' + gname : 'Waiting to download ' + gname),
           h('b', { style: 'font-size:18px' }, mine && pct ? pct + '%' : '')),
@@ -1600,9 +1600,9 @@ function tabOverview(id) {
       can('g') ? h('a', { href: '#/server/' + encodeURIComponent(id) + '/crashes' }, 'See the crash reports') : null));
     // Steam wants a password or a code: the box stays as it is while the question is the same (typing is not lost)
     const st = MI().steam;
-    const approving = v.busy && st && st.prompt === 'approve' && (st.label || '').includes(v.name);
-    const need = approving ? 'approving' : v.login_need && !v.busy ? v.login_need : '';
-    if (loginWrap.dataset.need !== need) { loginWrap.dataset.need = need; swap(loginWrap, approving ? approveNow(v) : need ? steamLoginBox(v) : null); }
+    const approving = v.busy && st && st.prompt && (st.label || '').includes(v.name) ? st.prompt : '';
+    const need = approving ? 'approving-' + approving : v.login_need && !v.busy ? v.login_need : '';
+    if (loginWrap.dataset.need !== need) { loginWrap.dataset.need = need; swap(loginWrap, approving ? approveNow(v, approving) : need ? steamLoginBox(v) : null); }
     if (v.error && !up && !v.login_need) list.push(h('div', { class: 'note bad' }, v.error));
     if (v.warn_until) list.push(h('div', { class: 'note warn' }, `The players are being warned in the chat: the server ${v.warn_what} in ${fmtDur(Math.max(0, v.warn_until - now()))}. Cancel stops it.`));
     if (v.update) list.push(h('div', { class: 'note orange' }, v.autoupdate ? 'Steam has an update. The manager installs it now, warning the players first.' : 'Steam has an update. Automatic updates are off for this server: click Update.'));
@@ -2528,6 +2528,12 @@ function bindText(obj, key, attrs) {
   inp.addEventListener('input', () => { obj[key] = inp.type === 'number' ? (inp.value === '' ? 0 : Number(inp.value)) : inp.value; if (bindText.onChange) bindText.onChange(); });
   return inp;
 }
+function bindArea(obj, key, attrs) {
+  const inp = h('textarea', Object.assign({ rows: 3, spellcheck: false }, attrs || {}));
+  inp.value = obj[key] == null ? '' : obj[key];
+  inp.addEventListener('input', () => { obj[key] = inp.value; if (bindText.onChange) bindText.onChange(); });
+  return inp;
+}
 function bindSelect(obj, key, options, onChange) {
   const enc = v => JSON.stringify(v === undefined ? null : v);
   const sel = h('select', null, options.map(([v, label]) => h('option', { value: enc(v), selected: enc(obj[key]) === enc(v) }, label)));
@@ -2622,11 +2628,14 @@ function steamLoginBox(v) {
     err, h('div', { class: 'row wrap', style: 'gap:8px' }, go, anon));
 }
 
-// approveNow: steamcmd waits (about a minute) for the login to be approved in the Steam app
-function approveNow(v) {
+// approveNow: steamcmd logs in with an account ('login': Steam may ask to approve it) or waits (about a minute) for
+// the login to be approved in the Steam app ('approve')
+function approveNow(v, prompt) {
+  const sure = prompt === 'approve';
   return h('div', { class: 'note warn col', style: 'gap:8px' },
-    h('div', { class: 'row', style: 'gap:10px' }, h('span', { class: 'spin' }), h('b', null, 'Approve the login in the Steam app now')),
-    h('div', { class: 'small' }, 'Steam asks to confirm this login' + (v.steam_user ? ' of ' + v.steam_user : '') + ': open the Steam app on the phone, tap the shield (Steam Guard) at the bottom, then Approve. steamcmd waits about a minute, then the download goes on by itself.'));
+    h('div', { class: 'row', style: 'gap:10px' }, h('span', { class: 'spin' }), h('b', null, sure ? 'Approve the login in the Steam app now' : 'Logging in to Steam' + (v.steam_user ? ' as ' + v.steam_user : ''))),
+    h('div', { class: 'small' }, sure ? 'Steam asks to confirm this login: the shield at the bottom of the Steam app, then Approve. steamcmd waits about a minute.'
+      : 'If Steam asks: approve the login in the Steam app, or wait for the code it emails (it is asked here once steamcmd stops).'));
 }
 
 // steamStage: what steamcmd is doing, in plain words
@@ -2788,9 +2797,9 @@ function serverForm(f, g, isNew, onChange) {
           : field('Folder', folderPicker(f, 'install_dir'), 'Where the game server is installed.', true),
         isNew ? null : h('div', { class: 'field wide' }, h('span', { class: 'flabel' }, 'Program'), (serverForm.exe = exePicker(f, onChange)),
           h('small', { class: 'hint' }, 'What starts the server. The manager finds the usual one by itself' + ((g.exe || []).length ? ' (' + g.exe.join(' or ') + ')' : '') + '; pick another when this server uses one of its own.')),
-        field('Notes', bindText(f, 'notes', { placeholder: 'Anything to remember: owner, plugins, purpose…' }), null, true))),
+        field('Notes', bindArea(f, 'notes', { rows: 3, placeholder: 'Anything to remember: owner, plugins, purpose…' }), null, true))),
     h('div', { class: 'section' }, h('h3', null, 'Game'), h('div', { class: 'hint' }, other ? 'Address, players and passwords: given on its command line.' : 'Address, players and first map.'),
-      other && g.notes ? h('div', { class: 'note info small', style: 'margin-bottom:12px;padding:8px 10px;border-radius:8px' }, g.notes) : null,
+      g.notes ? h('div', { class: 'note info small', style: 'margin-bottom:12px;padding:8px 10px;border-radius:8px;white-space:pre-line' }, g.notes) : null,
       h('div', { class: 'formgrid' },
         field('IP', ipPicker(f, isNew), 'The address players join it at. 0.0.0.0 (every address) only for a machine behind a router, whose public address is not one of its own.'),
         field('Port', bindText(f, 'port', { type: 'number', min: 1, max: 65535 })),
@@ -2816,12 +2825,12 @@ function serverForm(f, g, isNew, onChange) {
         h('div', { class: 'wide' }, bindCheck(f, 'autostart', 'Start with the manager', 'Started when the manager starts, unless you stopped it yourself.')),
         h('div', { class: 'wide' }, packagePicker(f)),
         g.metamod || g.engine === 'source' ? h('div', { class: 'wide' }, bindCheck(f, 'vanilla_while_waiting', 'Without its addons while it waits for a fix',
-          'When the manager gives up on it after crashes an addon caused (or crashes in a row after a game update), it starts it without its addons (Metamod off) until the fix is installed (the package\'s crash watch, on the Addons page). Players can play meanwhile; the plugins do not run.')) : null,
+          'When an addon keeps crashing it (often after a game update), it runs without its addons (Metamod off) until a new version of that addon is installed. Players can still play, without plugins.')) : null,
         field('Automatic updates', bindSelect(f, 'autoupdate', [[null, 'Manager default'], [true, 'On'], [false, 'Off']])),
         field('Update method', bindSelect(f, 'update_mode', [['direct', 'steamcmd into the server'], ['cache', 'Shared copy, then copy the files']]), 'The shared copy downloads once for all the servers of the game, while they keep running.'),
         field('Scheduled restart', restartSel), timeField,
         g.metamod ? field('Metamod', bindSelect(f, 'metamod', [[null, 'When addons/metamod is there'], [true, 'Always'], [false, 'Never']]), 'Each CS2 update removes Metamod from gameinfo.gi: the manager puts it back.') : null,
-        field('Steam login', bindText(f, 'steam_login', { placeholder: 'anonymous' }), 'anonymous for every free dedicated server: CS 1.6, CS:S, CS2, TF2… An account (user password) only for the rare game that needs one, without Steam Guard (the manager cannot type its code). Used from the next download or update.'))));
+        field('Steam login', bindText(f, 'steam_login', { placeholder: 'anonymous' }), 'anonymous for most games. An account only for the few that need one (DayZ, Arma): its password, and any code Steam asks for, are asked at the download. Used from the next download or update.'))));
 }
 
 function tabSettings(id) {
@@ -3671,12 +3680,13 @@ function pageNew() {
     // Steam login: anonymous for the free dedicated servers; an account, with its password for this download only
     let steamPass = '';
     const passIn = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Its password (not saved)', oninput: e => { steamPass = e.target.value; } });
-    const passWrap = h('div', { class: 'hidden' }, passIn, h('small', { class: 'muted' }, 'Used for this download only. If Steam asks for a Steam Guard code, the next page asks you for it.'));
-    const loginIn = bindText(f, 'steam_login', { placeholder: 'anonymous', autocomplete: 'off' });
+    const passWrap = h('div', { class: 'hidden' }, passIn, h('small', { class: 'muted' }, 'Used for this download only. If Steam asks for a code (email or Steam app), the next page asks for it.'));
+    if (game.login && (f.steam_login || '').trim().toLowerCase() === 'anonymous') f.steam_login = ''; // it needs an account
+    const loginIn = bindText(f, 'steam_login', { placeholder: game.login ? 'Steam account name' : 'anonymous', autocomplete: 'off' });
     const showPass = () => passWrap.classList.toggle('hidden', !f.steam_login || f.steam_login.trim().toLowerCase() === 'anonymous');
     loginIn.addEventListener('input', showPass);
     showPass();
-    append(loginField, field('Steam login', h('div', { class: 'col', style: 'gap:8px' }, loginIn, passWrap), 'anonymous works for every game here. A Steam account only if a game needs one.'));
+    append(loginField, field('Steam login', h('div', { class: 'col', style: 'gap:8px' }, loginIn, passWrap), game.login ? 'This game needs a Steam account: its name here.' : 'anonymous: this game needs no account.'));
     swap(body,
       h('div', { class: 'panel', style: 'max-width:760px' },
         h('div', { class: 'hd' }, badge(game.key, 'sm'), h('h2', { class: 'grow' }, game.name), h('button', { class: 'btn sm ghost', onclick: () => { step = 1; render(); } }, 'Change game')),
@@ -3686,6 +3696,7 @@ function pageNew() {
             h('div', { class: 'row wrap', style: 'gap:10px' }, folderText, change),
             h('div', { class: 'hint', style: 'margin-top:4px' }, 'A new or empty folder to install into, or the folder of a ' + game.name + ' server you already have.')),
           found,
+          game.notes ? h('div', { class: 'note info small', style: 'padding:8px 10px;border-radius:8px;white-space:pre-line' }, game.notes) : null,
           loginField,
           sizeLine,
           errs)),
@@ -3696,6 +3707,7 @@ function pageNew() {
     dlBtn.onclick = async () => {
       if (!f.name.trim()) { swap(errs, h('div', { class: 'note bad' }, 'Give the server a name.')); return; }
       if (!f.install_dir.trim()) { swap(errs, h('div', { class: 'note bad' }, 'Pick its folder: Change.')); return; }
+      if (game.login && mode !== 'existing' && !(f.steam_login || '').trim()) { swap(errs, h('div', { class: 'note bad' }, 'This game needs a Steam account: give its name.')); return; }
       if (mode === 'blocked') return;
       dlBtn.disabled = true;
       clear(errs);
@@ -4791,8 +4803,7 @@ function gameForm(g0, icons, onSaved) {
       field('Config file', bindText(g, 'config', { placeholder: 'serverconfig.xml' }), 'Shown on its Set up page. {os}: Windows or Linux.'),
       field('Ports it takes', bindText(g, 'ports', { type: 'number', min: 1, max: 100, placeholder: '1' }), 'From its port on (Valheim: 2): a next server gets other ones.'),
       field('First port', bindText(g, 'default_port', { type: 'number', min: 1, max: 65535, placeholder: '27015' })),
-      field('Environment', oArea('env', { rows: 2, placeholder: 'LD_LIBRARY_PATH={dir}/linux64' }), 'One per line, NAME=value ({dir}: the server\'s folder).', true),
-      field('Notes', bindText(g, 'notes', { placeholder: 'What to know when adding a server of it' }), null, true));
+      field('Environment', oArea('env', { rows: 2, placeholder: 'LD_LIBRARY_PATH={dir}/linux64' }), 'One per line, NAME=value ({dir}: the server\'s folder).', true));
   };
   drawOther();
   const iconPrev = h('img', { class: 'iconprev', alt: '' });
@@ -4865,6 +4876,7 @@ function gameForm(g0, icons, onSaved) {
     field('Program on Linux', linIn, null, true),
     field('Icon', iconBox, 'Pick one, or upload a PNG (square, 64×64 is plenty). Uploaded icons go to the icons folder next to szm.exe.', true),
     h('div', { class: 'wide' }, bindCheck(g, 'login', 'Needs a Steam account', 'Its dedicated server cannot be downloaded anonymously.')),
+    field('Notes', bindArea(g, 'notes', { rows: 3, placeholder: 'What to know when adding a server of it: an account it needs, a file to edit, its ports…' }), 'Shown when a server of it is added, and in its servers\' settings.', true),
     otherBox),
     err);
   append(m.ft, h('button', { class: 'btn ghost', onclick: () => m.close() }, 'Cancel'), save);

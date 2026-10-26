@@ -17,6 +17,7 @@ steamcmd/
 cache/
 servers/
 games.json
+/built/
 /backups/
 /crashes/
 /addons/

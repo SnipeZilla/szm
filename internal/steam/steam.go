@@ -5,7 +5,6 @@ package steam
 import (
 	"archive/tar"
 	"archive/zip"
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -346,30 +345,33 @@ func (r *Runner) Run(ctx context.Context, job Job, tries int, line func(string))
 }
 
 func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func(string)) (bool, error) {
-	cmd := exec.CommandContext(ctx, r.Path, args...)
-	cmd.Dir = filepath.Dir(r.Path)
-	proc.RunHiddenCmd(cmd)
-	out, err := cmd.StdoutPipe()
+	// In a console of its own, steamcmd prints each line at once (to a pipe, it holds them back)
+	run, err := proc.StartCaptured(ctx, r.Path, args, filepath.Dir(r.Path))
 	if err != nil {
 		return false, err
 	}
-	cmd.Stderr = cmd.Stdout
-	cmd.Stdin = strings.NewReader("") // a question (a Steam Guard code) gets an empty answer instead of waiting forever
-	if err := cmd.Start(); err != nil {
-		return false, err
+	out := run.Output
+	// An account logs in: Steam may want it approved in the Steam app, or a code it emails. steamcmd holds back what
+	// it prints meanwhile (on Windows, until it ends), so the console says it now.
+	if name := accountName(args); name != "" {
+		line("Logging in as " + name + ". If Steam asks: approve the login in the Steam app, or wait for the code it emails (asked on the page once steamcmd stops)")
 	}
+	var mu sync.Mutex // success and need: read by the timer that ends steamcmd waiting for a typed answer
 	success := false
 	var failure string
 	var need string // what Steam wants to let the account in
+	asked := false  // the timer is set
 	var mt meter
-	sc := bufio.NewScanner(out)
-	sc.Buffer(make([]byte, 64*1024), 1<<20)
-	sc.Split(scanLinesCR)
-	for sc.Scan() {
-		t := strings.TrimSpace(sc.Text())
+	last := "" // the line before: steamcmd says "Waiting for confirmation..." a dozen times
+	readLines(out, 400*time.Millisecond, func(t string) {
+		t = strings.TrimSpace(ansiRe.ReplaceAllString(t, ""))
 		if t == "" {
-			continue
+			return
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		same := t == last
+		last = t
 		if m := progressRe.FindStringSubmatch(t); m != nil {
 			pct, _ := strconv.ParseFloat(m[2], 64)
 			state := strings.TrimSpace(m[1])
@@ -406,7 +408,9 @@ func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func
 				np.Percent, np.State, np.Done, np.Total = c.Percent, c.State, c.Done, c.Total
 			}
 			r.set(&np)
-			line(t)
+			if !same {
+				line(t)
+			}
 		}
 		if strings.Contains(t, "Success! App") || strings.Contains(t, "already up to date") {
 			success = true
@@ -416,6 +420,9 @@ func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func
 		}
 		if n := loginNeed(t); needRank[n] > needRank[need] {
 			need = n
+		}
+		if lt := strings.ToLower(t); strings.Contains(lt, "logged in ok") || strings.Contains(lt, "waiting for user info") {
+			need = "" // in: what it asked before is answered
 		}
 		if need == "approve" && !success {
 			// steamcmd waits (about a minute) for the login to be approved in the Steam app: say it on the page
@@ -427,8 +434,23 @@ func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func
 		if why := loginTrouble(t); why != "" {
 			failure = why
 		}
-	}
-	werr := cmd.Wait()
+		// In its console, steamcmd waits forever for a password or a code typed there: it is ended, and the page asks
+		// for it (a few seconds first: an approval in the Steam app is announced with "Steam Guard" too)
+		if run.Console && typed(need) && !asked {
+			asked = true
+			time.AfterFunc(3*time.Second, func() {
+				mu.Lock()
+				end := typed(need) && !success
+				mu.Unlock()
+				if end {
+					run.Kill()
+				}
+			})
+		}
+	})
+	werr := run.Wait()
+	mu.Lock()
+	defer mu.Unlock()
 	if success {
 		return true, nil
 	}
@@ -446,6 +468,9 @@ func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func
 	}
 	return false, errors.New("steamcmd ended without installing the app")
 }
+
+// typed: what Steam asks is to be typed (a password, a code), not approved in the Steam app.
+func typed(need string) bool { return need == "password" || need == "guard" || need == "2fa" }
 
 // needRank: when steamcmd says several things, the most precise one wins (an approval in the Steam app is
 // announced with the words "Steam Guard" too).
@@ -467,6 +492,19 @@ func loginNeed(line string) string {
 		return "guard"
 	case strings.Contains(l, "invalid password") || strings.HasSuffix(strings.TrimSpace(l), "password:") || strings.Contains(l, "password required"):
 		return "password"
+	}
+	return ""
+}
+
+// ansiRe: the color codes steamcmd prints (ESC[0m, ESC[1m): not shown.
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)
+
+// accountName: the account steamcmd logs in with ("" for anonymous).
+func accountName(args []string) string {
+	for i, a := range args {
+		if a == "+login" && i+1 < len(args) && !strings.EqualFold(args[i+1], "anonymous") {
+			return args[i+1]
+		}
 	}
 	return ""
 }
@@ -493,16 +531,73 @@ func loginTrouble(line string) string {
 }
 
 // steamcmd rewrites its progress line with \r: split on \r and \n.
-func scanLinesCR(data []byte, atEOF bool) (int, []byte, error) {
-	for i, b := range data {
-		if b == '\n' || b == '\r' {
-			return i + 1, data[:i], nil
+// readLines gives what steamcmd prints, line by line (a line ends with \n or \r: its progress lines end with \r).
+// A line it leaves unfinished is given too after idle without more: steamcmd prints "Logging in user …" and
+// "Please confirm the login in the Steam Mobile app…" and waits, the line finished only once the login is through
+// (or a minute later). What then finishes it comes as its own line ("OK"); dots alone are passed over.
+func readLines(r io.Reader, idle time.Duration, line func(string)) {
+	chunks := make(chan []byte)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				chunks <- append([]byte(nil), buf[:n]...)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	var pending []byte
+	given := 0 // of pending, what was given already (unfinished)
+	give := func(b []byte) {
+		if strings.Trim(string(b), ". \t") != "" {
+			line(string(b))
 		}
 	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
+	timer := time.NewTimer(idle)
+	defer timer.Stop()
+	for {
+		select {
+		case c, ok := <-chunks:
+			if !ok {
+				if len(pending) > given {
+					give(pending[given:])
+				}
+				return
+			}
+			pending = append(pending, c...)
+			for {
+				k := bytes.IndexAny(pending, "\r\n")
+				if k < 0 {
+					break
+				}
+				if k > given {
+					give(pending[given:k])
+				}
+				pending, given = pending[k+1:], 0
+			}
+			if len(pending) > 1<<20 { // no end of line in a megabyte: given as it is
+				give(pending[given:])
+				pending, given = nil, 0
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(idle)
+		case <-timer.C:
+			if len(pending) > given {
+				give(pending[given:])
+				given = len(pending)
+			}
+			timer.Reset(idle)
+		}
 	}
-	return 0, nil, nil
 }
 
 // Download gets steamcmd from Valve into a folder: the path of steamcmd.exe (steamcmd.sh on Linux).

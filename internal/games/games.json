@@ -408,7 +408,7 @@
         "profiles/BattlEye/beserver_x64.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"]
       },
       "config": "serverDZ.cfg", "ports": 4, "default_port": 2302, "default_maxplayers": 60,
-      "notes": "Its download needs a Steam account (any one, with Steam Guard, open steam guard to confirm): set it as its Steam login. Its name, password and query port (steamQueryPort, 27016) are in serverDZ.cfg; its logs in profiles. Its RCON is BattlEye's (UDP, its port + 3: 2305): with an RCON password (letters and numbers, 24 at most), the manager sets it in profiles/BattlEye/BEServer_x64.cfg as it starts, with RestrictRCon 0, and stops it with #shutdown (BattlEye opens it once the server has finished loading)."
+      "notes": "Its download needs a Steam account (any one): set it as its Steam login; its password and any code Steam asks for are asked at the download. Its name, password and query port (steamQueryPort, 27016) are in serverDZ.cfg; its logs in profiles. Its RCON is BattlEye's (UDP, its port + 3: 2305): with an RCON password (letters and numbers, 24 at most), the manager sets it in profiles/BattlEye/BEServer_x64.cfg as it starts, with RestrictRCon 0, and stops it with #shutdown (BattlEye opens it once the server has finished loading)."
     },
     "arma2oa": {
       "name": "Arma 2: Operation Arrowhead", "short": "Arma 2 OA", "engine": "other", "appid": 33930, "server_appid": 33935, "login": true,
@@ -418,7 +418,7 @@
       "rcon_config": { "profiles/BattlEye/BEServer.cfg": ["RConPassword {rcon_password}", "RConPort {rconport}", "RestrictRCon 0"] },
       "config": "server.cfg", "config_new": ["hostname = \"{name}\";", "maxPlayers = {maxplayers};", "persistent = 1;", "BattlEye = 1;"],
       "console_log": "profiles/arma2oaserver.RPT", "ports": 6, "default_port": 2302, "default_maxplayers": 32,
-      "notes": "Windows only. Its download needs a Steam account (with Steam Guard, open steam guard to confirm): set it as its Steam login; steamcmd may refuse one that does not own Arma 2: Operation Arrowhead. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its log is profiles/arma2oaserver.RPT. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in profiles/BattlEye/BEServer.cfg as it starts, and stops it with #shutdown."
+      "notes": "Windows only. Its download needs a Steam account: set it as its Steam login; its password and any code Steam asks for are asked at the download. steamcmd may refuse an account that does not own Arma 2: Operation Arrowhead. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its log is profiles/arma2oaserver.RPT. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in profiles/BattlEye/BEServer.cfg as it starts, and stops it with #shutdown."
     },
     "arma3": {
       "name": "Arma 3", "short": "Arma 3", "engine": "other", "appid": 107410, "server_appid": 233780, "login": true,
@@ -432,7 +432,7 @@
       },
       "config": "server.cfg", "config_new": ["hostname = \"{name}\";", "maxPlayers = {maxplayers};", "persistent = 1;", "BattlEye = 1;"],
       "ports": 6, "default_port": 2302, "default_maxplayers": 32,
-      "notes": "Its download needs a Steam account (with Steam Guard, open steam guard to confirm): set it as its Steam login. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its logs (.rpt) in profiles. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in BattlEye's BEServer_x64.cfg as it starts, and stops it with #shutdown."
+      "notes": "Its download needs a Steam account: set it as its Steam login; its password and any code Steam asks for are asked at the download. Its name and players are written into server.cfg at its first start; its join password and missions go there too; its logs (.rpt) in profiles. Its RCON is BattlEye's (UDP, its port + 5: 2307): with an RCON password (letters and numbers), the manager sets it in BattlEye's BEServer_x64.cfg as it starts, and stops it with #shutdown."
     },
     "bo3": {
       "name": "Call of Duty: Black Ops III", "short": "BO3", "engine": "other", "appid": 311210, "server_appid": 545990,
