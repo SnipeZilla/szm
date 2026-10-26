@@ -1,6 +1,6 @@
 # Building SnipeZilla Server Manager 2
 
-For people who want to build the program themselves, or work on it. To just use it, download it from [snipezilla.com](https://snipezilla.com) and see [INSTALL.md](INSTALL.md).
+For people who want to build the program themselves, or work on it. To just use it, download it from [snipezilla.com](https://snipezilla.com/resources/snipezilla-server-manager.55/) and see [INSTALL.md](INSTALL.md).
 
 - [What you need](#what-you-need)
 - [Get the code](#get-the-code)
