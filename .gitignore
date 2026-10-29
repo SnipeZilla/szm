@@ -1,5 +1,4 @@
 # Built program, and its checksums (made for each release)
-*.bat
 *.exe
 /szm
 /SHA256SUMS.txt
@@ -12,6 +11,7 @@ state.json
 setup-code.txt
 szm.log
 szm.log.old
+szm-service.bat
 logs/
 steamcmd/
 cache/
@@ -25,3 +25,4 @@ games.json
 /rclone/
 /test-data/
 !internal/games/games.json
+
