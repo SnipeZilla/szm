@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"github.com/SnipeZilla/szm/internal/config"
 	"github.com/SnipeZilla/szm/internal/events"
 	"github.com/SnipeZilla/szm/internal/query"
@@ -276,5 +277,43 @@ func TestWarnWhileQueued(t *testing.T) {
 	}
 	if !strings.HasPrefix(said["b"][0], "Server updates in") || queued < 1 || said["b"][len(said["b"])-1] != sayNow {
 		t.Fatalf("b: %q", said["b"])
+	}
+}
+
+// A failed update is tried again later, not at once (the server would be stopped and started again and again):
+// 15 minutes, then 30, 1, 2 and 4 hours at most; a cancelled one is not counted.
+func TestUpdateFailed(t *testing.T) {
+	dir := t.TempDir()
+	m := &Manager{DataDir: dir, Log: events.New(filepath.Join(dir, "logs")), Cfg: &config.Config{}}
+	i := &Instance{}
+	s := config.Server{ID: "cs2-4", Name: "CS2 - Server 4"}
+	want := []time.Duration{15 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour, 4 * time.Hour, 4 * time.Hour}
+	for k, w := range want {
+		m.updateFailed(i, s, errors.New("Error! App '730' state is 0x6 after update job."))
+		if d := time.Until(i.updateRetryAt); d < w-time.Minute || d > w {
+			t.Fatalf("failure %d: tried again in %s, want %s", k+1, d, w)
+		}
+	}
+	if e := m.Log.Recent("cs2-4", 1); len(e) != 1 || e[0].Text != "Update failed: Error! App '730' state is 0x6 after update job. Tried again in 4h 00m, checking its files (or Update on its page now)." {
+		t.Fatalf("%+v", e)
+	}
+	m.updateFailed(i, s, context.Canceled)
+	if i.updateFails != len(want) {
+		t.Fatal("a cancelled update counted")
+	}
+}
+
+// A cancelled automatic update is not started again at once by itself: it waits an hour.
+func TestUpdateCancelled(t *testing.T) {
+	dir := t.TempDir()
+	m := &Manager{DataDir: dir, Log: events.New(filepath.Join(dir, "logs")), Cfg: &config.Config{}}
+	i := &Instance{updateWanted: true}
+	s := config.Server{ID: "cs2-5", Name: "CS2 - Server 5"}
+	m.updateFailed(i, s, context.Canceled)
+	if d := time.Until(i.updateRetryAt); d < 59*time.Minute || d > time.Hour || i.updateFails != 0 {
+		t.Fatal(d, i.updateFails)
+	}
+	if e := m.Log.Recent("cs2-5", 1); len(e) != 1 || e[0].Text != "Update cancelled: the automatic update waits an hour (Update on its page starts it now)" {
+		t.Fatalf("%+v", e)
 	}
 }

@@ -921,20 +921,20 @@ func (m *Manager) Update(id string, validate bool, by string, warn bool) error {
 		if s.UpdateMode == "cache" {
 			// Download while the server still runs, then stop it only for the copy
 			if err = m.updateCache(ctx, i, s, g, validate, target); err != nil {
-				m.Log.Add(events.Error, s.ID, s.Name, "Update failed: %v", err)
+				m.updateFailed(i, s, err)
 				return
 			}
 			// Its players are warned now, while it waits for its turn to copy (one server at a time); it is stopped when
 			// both the warning time is over and its turn has come
 			var next func()
 			if next, err = m.warnWhileQueued(ctx, i, s, warn || by == "", secs); err != nil {
-				m.Log.Add(events.Info, s.ID, s.Name, "Update cancelled")
+				m.updateCancelled(i, s)
 				return
 			}
 			i.setStage("Stopping it for the copy")
 			if err = m.stopProcess(ctx, i, s, g); err != nil {
 				next()
-				m.Log.Add(events.Info, s.ID, s.Name, "Update cancelled")
+				m.updateCancelled(i, s)
 				return
 			}
 			i.setStage("Backing up before the update")
@@ -943,18 +943,19 @@ func (m *Manager) Update(id string, validate bool, by string, warn bool) error {
 			next()
 		} else {
 			if err = stop(); err != nil {
-				m.Log.Add(events.Info, s.ID, s.Name, "Update cancelled")
+				m.updateCancelled(i, s)
 				return
 			}
 			m.backupBefore(i, s, g, "before-update")
 			err = m.runSteam(ctx, i, s, g, s.InstallDir, validate, "update "+s.Name)
 		}
 		if err != nil {
-			m.Log.Add(events.Error, s.ID, s.Name, "Update failed: %v", err)
+			m.updateFailed(i, s, err)
 		} else {
 			m.afterInstall(i, s, g)
 			i.mu.Lock()
 			i.updateWanted, i.repairWanted = false, false
+			i.updateFails, i.updateRetryAt = 0, time.Time{}
 			stuck := target > 0 && i.versionNum > 0 && i.versionNum < target
 			if stuck {
 				i.updateStuck = target
@@ -979,6 +980,39 @@ func (m *Manager) Update(id string, validate bool, by string, warn bool) error {
 		}
 	}()
 	return nil
+}
+
+// updateCancelled: an update cancelled (Cancel, or the players' warning stopped) is not started again at once by
+// itself: the automatic update waits an hour (Update on its page starts it now).
+func (m *Manager) updateCancelled(i *Instance, s config.Server) {
+	i.mu.Lock()
+	auto := i.updateWanted
+	if auto {
+		i.updateRetryAt = time.Now().Add(time.Hour)
+	}
+	i.mu.Unlock()
+	if auto {
+		m.Log.Add(events.Info, s.ID, s.Name, "Update cancelled: the automatic update waits an hour (Update on its page starts it now)")
+	} else {
+		m.Log.Add(events.Info, s.ID, s.Name, "Update cancelled")
+	}
+}
+
+// updateFailed says an update failed, and when an automatic one is tried again: 15 minutes later, then 30, 1 hour,
+// 2 hours, 4 hours at most (tried again at once, the server would be stopped and started again and again; Steam's
+// content servers often lack a new version for a while after it comes out). Update on its page tries at once. The
+// next automatic try checks its files too (steamcmd's validate: a download left half done is put right).
+func (m *Manager) updateFailed(i *Instance, s config.Server, err error) {
+	if errors.Is(err, context.Canceled) {
+		m.updateCancelled(i, s)
+		return
+	}
+	i.mu.Lock()
+	i.updateFails++
+	wait := 15 * time.Minute << min(i.updateFails-1, 4)
+	i.updateRetryAt = time.Now().Add(wait)
+	i.mu.Unlock()
+	m.Log.Add(events.Error, s.ID, s.Name, "Update failed: %s. Tried again in %s, checking its files (or Update on its page now).", strings.TrimSuffix(err.Error(), "."), fmtDur(wait))
 }
 
 func (m *Manager) versionOf(i *Instance) string {

@@ -76,6 +76,10 @@ type Instance struct {
 	updateTo     int64 // the version Steam asks for
 	repairWanted bool  // validate the files at the next start (after crashes)
 	updateStuck  int64 // a version Steam asked for that an update did not bring: not asked again
+	// updateFails: automatic updates that failed in a row; updateRetryAt: when the next one may be tried (a failed
+	// update is not tried again at once: the server would be stopped and started again and again)
+	updateFails   int
+	updateRetryAt time.Time
 
 	lastRestartDay string
 

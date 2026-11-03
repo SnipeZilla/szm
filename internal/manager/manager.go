@@ -472,8 +472,8 @@ func (m *Manager) tickServer(s config.Server, stats bool) {
 		}
 	}
 	start := i.desired && !i.failed && !now.Before(i.nextStart)
-	repair := i.repairWanted
-	update := i.updateWanted && m.autoUpdate(s)
+	update := i.updateWanted && m.autoUpdate(s) && !now.Before(i.updateRetryAt)
+	repair := i.repairWanted || (update && i.updateFails > 0) // after a failed update: its files checked too
 	stopped := i.status == StatusStopped && !i.desired
 	i.mu.Unlock()
 
@@ -486,7 +486,7 @@ func (m *Manager) tickServer(s config.Server, stats bool) {
 		}
 	case update && stopped:
 		// a stopped server is updated too, so that it starts up to date
-		m.Update(s.ID, false, "", true)
+		m.Update(s.ID, repair, "", true)
 	}
 }
 
@@ -864,12 +864,13 @@ func (m *Manager) schedule(i *Instance, s config.Server, g *games.Game) {
 		players = i.info.Players - i.info.Bots
 	}
 	since := i.since
-	update := i.updateWanted && m.autoUpdate(s)
+	update := i.updateWanted && m.autoUpdate(s) && !now.Before(i.updateRetryAt)
+	failedBefore := i.updateFails > 0
 	lastDay := i.lastRestartDay
 	i.mu.Unlock()
 
 	if update {
-		m.Update(s.ID, false, "", true)
+		m.Update(s.ID, failedBefore, "", true) // after a failed update: its files checked too
 		return
 	}
 

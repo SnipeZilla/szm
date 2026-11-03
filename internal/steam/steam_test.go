@@ -210,3 +210,101 @@ func TestGuardCodeAsked(t *testing.T) {
 		t.Fatal("approval not waited for:", ok, err)
 	}
 }
+
+// "state is 0x6 after update job" says no why: the reason steamcmd's content log gives is added, from this run only.
+func TestContentLogReason(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "logs"), 0o755)
+	now := time.Now()
+	ts := func(d time.Duration) string { return "[" + now.Add(d).Format("2006-01-02 15:04:05") + "] " }
+	log := ts(-time.Hour) + "AppID 730 update canceled : Old reason\r\n" +
+		ts(0) + "AppID 730 state changed : Update Required,Fully Installed,Update Started,\r\n" +
+		ts(time.Second) + "AppID 730 update canceled : Not enough disk space (\"E:\\CS2 - Server 4\")\r\n" +
+		ts(2*time.Second) + "AppID 7300 update canceled : another app\r\n"
+	os.WriteFile(filepath.Join(dir, "logs", "content_log.txt"), []byte(log), 0o644)
+	if got := contentLogReason(dir, "730", now); got != "AppID 730 update canceled : Not enough disk space (\"E:\\CS2 - Server 4\")" {
+		t.Fatalf("%q", got)
+	}
+	// only what this run wrote
+	os.WriteFile(filepath.Join(dir, "logs", "content_log.txt"), []byte(ts(-time.Hour)+"AppID 730 update canceled : Old reason\r\n"), 0o644)
+	if got := contentLogReason(dir, "730", now); got != "" {
+		t.Fatalf("an old line: %q", got)
+	}
+	// a copied folder, its install record not the login's: Steam refuses the file lists (the cancel line says
+	// "No connection")
+	real := ts(0) + "Client version: 1792617903\r\n" +
+		ts(0) + "Loaded 1 apps from install folder \"e:\\counter-strike 2 - server test - copy\\steamapps\\appmanifest_*.acf\".\r\n" +
+		ts(time.Second) + "CDepotDownloadMgr::BYldRequestDepotManifest(App: 730, Depot: 2347770, Manifest: 4758919807587010422, branch: ): Failed to get manifest request code, 'Access Denied'\r\n" +
+		ts(time.Second) + "HTTPS (SteamCache,174) - cache12-iad1.steamcontent.com: cache12-iad1.steamcontent.com/depot/731/manifest/1878231805402408119/5/3444192182432719350 - manifest request received 200 (OK) HTTP response\r\n" +
+		ts(time.Second) + "CDepotDownloadMgr::BYldRequestDepotManifest(App: 730, Depot: 2347771, Manifest: 571072184844314041, branch: ): Failed to get manifest request code, 'Access Denied'\r\n" +
+		ts(time.Second) + "AppID 730 update canceled : Failed downloading 2 manifests (No connection)\r\n" +
+		ts(time.Second) + "AppID 730 App update changed : Running Update,Reconfiguring,Stopping,\r\n" +
+		ts(time.Second) + "AppID 730 scheduler finished : removed from schedule (result No connection, state 0xe) \r\n"
+	os.WriteFile(filepath.Join(dir, "logs", "content_log.txt"), []byte(ts(-time.Hour)+"CDepotDownloadMgr::BYldRequestDepotManifest(App: 730, Depot: 999, Manifest: 1, branch: ): Failed to get manifest request code, 'Access Denied'\r\n"+real), 0o644)
+	if got := contentLogReason(dir, "730", now); got != "AppID 730 update canceled : Failed downloading 2 manifests (No connection); Steam refused the file lists of depots 2347770, 2347771 (Access Denied)" {
+		t.Fatalf("%q", got)
+	}
+	if contentLogReason(t.TempDir(), "730", now) != "" || argAfter([]string{"+login", "anonymous", "+app_update", "730", "validate"}, "+app_update") != "730" {
+		t.Fatal("no log, or app")
+	}
+}
+
+// Steam refuses the files to a copied folder's install record (Access Denied): the record is set aside once and the
+// files checked again; refused again, the message says what is left to do.
+func TestAccessDeniedReset(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("a shell script")
+	}
+	tool := t.TempDir()
+	os.MkdirAll(filepath.Join(tool, "logs"), 0o755)
+	srv := t.TempDir()
+	os.MkdirAll(filepath.Join(srv, "steamapps"), 0o755)
+	manifest := filepath.Join(srv, "steamapps", "appmanifest_730.acf")
+	os.WriteFile(manifest, []byte("copied"), 0o644)
+	sh := filepath.Join(tool, "steamcmd.sh")
+	script := func(always bool) {
+		cond := `[ -f "$2/steamapps/appmanifest_730.acf" ]`
+		if always {
+			cond = "true"
+		}
+		os.WriteFile(sh, []byte(`#!/bin/sh
+echo "$@" >> "$(dirname "$0")/calls"
+log="$(dirname "$0")/logs/content_log.txt"
+if `+cond+`; then
+  d=$(date "+[%Y-%m-%d %H:%M:%S]")
+  echo "$d Client version: 1" >> "$log"
+  echo "$d CDepotDownloadMgr::BYldRequestDepotManifest(App: 730, Depot: 2347770, Manifest: 1, branch: ): Failed to get manifest request code, 'Access Denied'" >> "$log"
+  echo "$d AppID 730 update canceled : Failed downloading 1 manifests (No connection)" >> "$log"
+  echo "Error! App '730' state is 0x6 after update job."
+else
+  echo new > "$2/steamapps/appmanifest_730.acf"
+  echo "Success! App '730' fully installed."
+fi
+`), 0o755)
+	}
+	script(false)
+	r := &Runner{Path: sh}
+	var lines []string
+	err := r.Run(context.Background(), Job{Dir: srv, AppID: 730, Login: "anonymous"}, 1, func(l string) { lines = append(lines, l) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(manifest + ".old"); string(b) != "copied" {
+		t.Fatal("the copied record not set aside")
+	}
+	calls, _ := os.ReadFile(filepath.Join(tool, "calls"))
+	if c := strings.Split(strings.TrimSpace(string(calls)), "\n"); len(c) != 2 || strings.Contains(c[0], "validate") || !strings.Contains(c[1], "validate") {
+		t.Fatalf("%q", c)
+	}
+	if !strings.Contains(strings.Join(lines, "|"), `Steam refused the update (Access Denied): this folder's install record (steamapps\appmanifest_730.acf) does not match this login`) {
+		t.Fatal(lines)
+	}
+	// refused again: what is left to do
+	os.WriteFile(manifest, []byte("copied"), 0o644)
+	script(true)
+	err = r.Run(context.Background(), Job{Dir: srv, AppID: 730, Login: "anonymous"}, 1, func(string) {})
+	if err == nil || !strings.HasSuffix(err.Error(), "Steam still refuses them to anonymous. Set its Steam login to the account it was installed with") ||
+		!strings.Contains(err.Error(), "(Access Denied)") {
+		t.Fatal(err)
+	}
+}

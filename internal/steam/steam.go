@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -301,6 +302,7 @@ func (r *Runner) Run(ctx context.Context, job Job, tries int, line func(string))
 		login = append(login, job.TwoFactor) // +login user password code
 	}
 	var last error
+	reset := false // the folder's install record set aside after Steam refused it its files (once)
 	for try := 1; try <= tries; try++ {
 		args := []string{"+force_install_dir", job.Dir}
 		if job.GuardCode != "" {
@@ -333,6 +335,26 @@ func (r *Runner) Run(ctx context.Context, job Job, tries int, line func(string))
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// Steam refuses the file lists (Access Denied): the folder's install record (steamapps/appmanifest_<app>.acf)
+		// is not this login's, as in a folder copied from another server. Set aside, steamcmd writes a new one and
+		// checks the files there, downloading only what differs.
+		if err != nil && strings.Contains(err.Error(), "(Access Denied)") {
+			manifest := filepath.Join(job.Dir, "steamapps", fmt.Sprintf("appmanifest_%d.acf", job.AppID))
+			if !reset {
+				if _, serr := os.Stat(manifest); serr == nil {
+					_ = os.Remove(manifest + ".old")
+					if os.Rename(manifest, manifest+".old") == nil {
+						reset, job.Validate = true, true
+						line(fmt.Sprintf("Steam refused the update (Access Denied): this folder's install record (steamapps\\appmanifest_%d.acf) does not match this login, as in a copied folder. It is set aside (.old), and the files are checked again", job.AppID))
+						try-- // this try again
+						continue
+					}
+				}
+			} else {
+				return fmt.Errorf("%s. Its install record was set aside and its files checked: Steam still refuses them to %s. Set its Steam login to the account it was installed with",
+					strings.TrimSuffix(err.Error(), "."), login[0])
+			}
+		}
 		if try < tries {
 			line(fmt.Sprintf("steamcmd: try %d of %d did not finish the install, running it again", try, tries))
 			time.Sleep(3 * time.Second)
@@ -345,6 +367,7 @@ func (r *Runner) Run(ctx context.Context, job Job, tries int, line func(string))
 }
 
 func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func(string)) (bool, error) {
+	started := time.Now()
 	// In a console of its own, steamcmd prints each line at once (to a pipe, it holds them back)
 	run, err := proc.StartCaptured(ctx, r.Path, args, filepath.Dir(r.Path))
 	if err != nil {
@@ -461,12 +484,82 @@ func (r *Runner) once(ctx context.Context, args []string, p *Progress, line func
 		return false, &LoginError{Need: need}
 	}
 	if failure != "" {
+		// "state is 0x6 after update job" says no why: steamcmd's content log does
+		if strings.Contains(failure, "state is 0x") {
+			if why := contentLogReason(filepath.Dir(r.Path), argAfter(args, "+app_update"), started); why != "" {
+				failure = strings.TrimSuffix(failure, ".") + "; steamcmd's log: " + why
+			}
+		}
 		return false, errors.New(failure)
 	}
 	if werr != nil {
 		return false, fmt.Errorf("steamcmd: %v", werr)
 	}
 	return false, errors.New("steamcmd ended without installing the app")
+}
+
+// argAfter: the argument after another ("+app_update" → "730").
+func argAfter(args []string, a string) string {
+	for k := 0; k+1 < len(args); k++ {
+		if args[k] == a {
+			return args[k+1]
+		}
+	}
+	return ""
+}
+
+// contentLogReason: why steamcmd's content log (logs/content_log.txt) says it gave up the update of an app, since a
+// time: its last line about the app that says canceled, failed or error ("AppID 730 update canceled : Not enough
+// disk space"); "" when there is none.
+func contentLogReason(dir, appid string, since time.Time) string {
+	if appid == "" {
+		return ""
+	}
+	f, err := os.Open(filepath.Join(dir, "logs", "content_log.txt"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > 256<<10 {
+		_, _ = f.Seek(st.Size()-256<<10, io.SeekStart)
+	}
+	b, _ := io.ReadAll(f)
+	lines := strings.Split(strings.ReplaceAll(string(b), "\r", ""), "\n")
+	reason := ""
+	var denied []string // the depots Steam refused ("Failed to get manifest request code, 'Access Denied'")
+	depotRe := regexp.MustCompile(`App: ` + regexp.QuoteMeta(appid) + `, Depot: (\d+)`)
+	for k := len(lines) - 1; k >= 0; k-- {
+		l := strings.TrimSpace(lines[k])
+		// "[2026-11-02 21:10:05] AppID 730 update canceled : …"
+		if len(l) > 21 && l[0] == '[' && l[20] == ']' {
+			if at, err := time.ParseInLocation("2006-01-02 15:04:05", l[1:20], time.Local); err == nil {
+				if at.Before(since.Add(-5 * time.Second)) {
+					break // older than this run
+				}
+				l = strings.TrimSpace(l[21:])
+			}
+		}
+		low := strings.ToLower(l)
+		if reason == "" && strings.Contains(low, "appid "+appid+" ") && (strings.Contains(low, "cancel") || strings.Contains(low, "fail") || strings.Contains(low, "error")) {
+			if len(l) > 300 {
+				l = l[:300] + "…"
+			}
+			reason = l
+			continue
+		}
+		if reason != "" && strings.Contains(low, "access denied") {
+			if m := depotRe.FindStringSubmatch(l); m != nil && !slices.Contains(denied, m[1]) {
+				denied = append([]string{m[1]}, denied...)
+			}
+		}
+		if reason != "" && strings.Contains(l, "Client version:") {
+			break // the start of this steamcmd's run
+		}
+	}
+	if len(denied) > 0 {
+		reason += "; Steam refused the file lists of depots " + strings.Join(denied, ", ") + " (Access Denied)"
+	}
+	return reason
 }
 
 // typed: what Steam asks is to be typed (a password, a code), not approved in the Steam app.
