@@ -13,12 +13,12 @@ import (
 	"github.com/SnipeZilla/szm/internal/proc"
 )
 
-// CS2 on Windows ignores -condebug and prints only into its console window: every 2 s the manager reads the last
+// CS2 on Windows ignores -condebug and prints only into its console window: every 1 s the manager reads the last
 // rows of that window and adds the new ones to its console log (game/csgo/console.log), as -condebug would. The
 // Console tab, the crash reports and the rest read the log as for any other game.
 
 const (
-	windowRows = 400 // rows read each time: more than a server prints in 2 s
+	windowRows = 400 // rows read each time: more than a server prints in 1 s
 	windowTail = 30  // the last rows kept, to find where the new ones start
 )
 
@@ -34,7 +34,7 @@ func (m *Manager) captureWindow(i *Instance, s config.Server, g *games.Game) {
 	}
 	i.mu.Lock()
 	pid := i.pid
-	due := pid > 0 && !i.winBusy && time.Since(i.winAt) >= 2*time.Second
+	due := pid > 0 && !i.winBusy && time.Since(i.winAt) >= 1*time.Second
 	if due {
 		i.winAt, i.winBusy = time.Now(), true
 	}

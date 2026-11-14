@@ -90,7 +90,7 @@ type fileEntry struct {
 }
 
 var textExt = map[string]bool{
-	".cfg": true, ".txt": true, ".ini": true, ".log": true, ".json": true, ".vdf": true, ".res": true, ".gi": true,
+	".cfg": true, ".txt": true, ".ini": true, ".log": true, ".json": true, ".vdf": true, ".res": true, ".gi": true, ".gam": true,
 	".lst": true, ".xml": true, ".yml": true, ".yaml": true, ".sp": true, ".inc": true, ".smx.txt": true, ".kv": true,
 	".properties": true, ".rc": true, ".bat": true, ".cmd": true, ".sh": true, ".md": true, ".csv": true,
 	".phrases.txt": true, ".db.txt": true, ".conf": true, ".toml": true, ".lua": true, ".nut": true, ".js": true,
