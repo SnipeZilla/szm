@@ -1660,19 +1660,62 @@ function lineClass(l) {
   return '';
 }
 
+// The console of a server, live.
+//
+// Its lines come by a stream (Server-Sent Events) that the page looks after itself: cut, it is opened again from the
+// last line shown (only what was missed comes), and a stream that goes silent is noticed (the manager gives a sign
+// every 15 s). Where a stream can not be kept (a proxy holding it back), the page asks instead, and is answered as a
+// line comes. Nothing to refresh.
+//
+// The lines are drawn once per frame, however many come, and the oldest dropped in one go. While Follow is on the
+// view stays on the last line whatever happens to the page (resized, filtered, shown again); scrolling up turns it
+// off, and the new lines are then counted on a button that brings back to them.
 function tabConsole(id) {
   const v0 = serverBy(id);
   const pre = h('pre', { tabindex: '0', 'aria-label': 'Console', 'aria-live': 'off' });
   const filterIn = h('input', { type: 'search', placeholder: 'Filter…', style: 'width:180px;height:30px' });
-  let follow = true;
-  const followBtn = h('button', { class: 'btn sm', title: 'Follow new lines', onclick: () => { follow = !follow; followBtn.classList.toggle('primary', follow); if (follow) pre.scrollTop = pre.scrollHeight; } }, icon('arrowdown'), 'Follow');
-  followBtn.classList.add('primary');
-  const MAX = 3000;
+  const MAX = 3000; // lines kept in the page
   let filterText = '';
+  let dead = false; // the tab is closed
 
-  function addLines(lines) {
-    if (!Array.isArray(lines)) return; // a new server has no console yet
-    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+  /* ----- the view: Follow ----- */
+  let follow = true;
+  let autoTop = -1;   // where the page itself last put the view: a scroll to there is not the user's
+  let holdUntil = 0;  // the user just scrolled up: not taken for a return to the last line
+  let unseen = 0;     // lines that came while not following
+  const followBtn = h('button', { class: 'btn sm primary', title: 'Follow new lines', onclick: () => setFollow(!follow) }, icon('arrowdown'), 'Follow');
+  const newBtn = h('button', { class: 'connew hidden', type: 'button', onclick: () => setFollow(true) });
+  const toEnd = () => { pre.scrollTop = pre.scrollHeight; autoTop = pre.scrollTop; };
+  function setFollow(on) {
+    if (on === follow) { if (on) toEnd(); return; }
+    follow = on;
+    followBtn.classList.toggle('primary', follow);
+    if (follow) { unseen = 0; newBtn.classList.add('hidden'); toEnd(); }
+  }
+  const atEnd = () => pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4;
+  pre.addEventListener('scroll', () => {
+    if (Math.abs(pre.scrollTop - autoTop) <= 1) return;
+    if (!atEnd()) setFollow(false);
+    else if (performance.now() > holdUntil) setFollow(true);
+  }, { passive: true });
+  const away = () => { holdUntil = performance.now() + 400; setFollow(false); };
+  pre.addEventListener('wheel', e => { if (e.deltaY < 0 && pre.scrollHeight > pre.clientHeight) away(); }, { passive: true });
+  pre.addEventListener('keydown', e => { if (['PageUp', 'ArrowUp', 'Home'].includes(e.key) && pre.scrollHeight > pre.clientHeight) away(); });
+  // resized, or shown after being hidden: still on the last line
+  const sized = window.ResizeObserver ? new ResizeObserver(() => { if (follow) toEnd(); }) : null;
+  if (sized) sized.observe(pre);
+
+  /* ----- drawing: once per frame ----- */
+  let queue = [];
+  let drawing = 0;
+  let drawTimer = null;
+  function draw() {
+    drawing = 0;
+    clearTimeout(drawTimer);
+    drawTimer = null;
+    if (!queue.length || dead) return;
+    const lines = queue;
+    queue = [];
     const frag = document.createDocumentFragment();
     for (const l of lines) {
       const sp = document.createElement('span');
@@ -1683,47 +1726,201 @@ function tabConsole(id) {
       frag.append(sp);
     }
     pre.append(frag);
-    while (pre.childNodes.length > MAX) pre.removeChild(pre.firstChild);
-    if (follow && (atBottom || lines.length > 200)) pre.scrollTop = pre.scrollHeight;
+    const over = pre.childElementCount - MAX;
+    if (over > 0) {
+      const r = document.createRange();
+      r.setStartBefore(pre.firstChild);
+      r.setEndAfter(pre.children[over - 1]);
+      r.deleteContents();
+    }
+    if (follow) toEnd();
+    else {
+      unseen += lines.length;
+      newBtn.textContent = '↓ ' + (unseen > 999 ? '999+' : unseen) + ' new line' + (unseen === 1 ? '' : 's');
+      newBtn.classList.remove('hidden');
+    }
+  }
+  function schedule() {
+    // a page in the background gets no frame: drawn now and then, so that the lines do not pile up
+    if (!drawing) drawing = requestAnimationFrame(draw);
+    if (!drawTimer) drawTimer = setTimeout(draw, document.hidden ? 1000 : 250);
+  }
+  function addLines(lines) {
+    if (!Array.isArray(lines) || !lines.length) return; // a new server has no console yet
+    queue = queue.length ? queue.concat(lines) : lines;
+    if (queue.length > MAX) queue = queue.slice(-MAX);
+    schedule();
+  }
+  // reset: the console from its start (the page just opened, or it was too far behind)
+  function reset(lines) {
+    queue = [];
+    clear(pre);
+    unseen = 0;
+    newBtn.classList.add('hidden');
+    addLines(lines);
+    draw();
+    if (follow) toEnd();
   }
 
   filterIn.addEventListener('input', debounce(() => {
-    filterText = filterIn.value.toLowerCase();
+    filterText = filterIn.value.trim().toLowerCase();
     for (const sp of pre.children) sp.hidden = !!filterText && !sp.textContent.toLowerCase().includes(filterText);
+    if (follow) toEnd();
   }, 150));
-  pre.addEventListener('scroll', () => {
-    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
-    if (!atBottom && follow) { follow = false; followBtn.classList.remove('primary'); }
-    if (atBottom && !follow) { follow = true; followBtn.classList.add('primary'); }
-  });
 
+  /* ----- its lines: the stream, looked after ----- */
   const consoleURL = 'api/servers/' + encodeURIComponent(id) + '/console';
+  const stateEl = h('span', { class: 'constate' });
+  function setState(st) {
+    if (stateEl.dataset.st === st) return;
+    stateEl.dataset.st = st;
+    stateEl.setAttribute('data-tip', {
+      live: 'Live: the lines show as the server writes them',
+      wait: 'Connecting to the console…',
+      retry: 'The connection to the console was cut: connecting again, from the last line shown',
+      paused: 'Paused while the page was in the background: it continues from the last line shown',
+    }[st] || '');
+  }
+  setState('wait');
   let es = null;
-  let poll = null;
-  let next = 0;
-  const pollConsole = () => {
-    if (poll) return;
+  let pos = '';       // the place of the last line shown: "<run of the manager>-<number of the next line>"
+  let fails = 0;      // streams that failed in a row
+  let everLive = false; // a stream gave lines here: streams work, one that fails is tried again
+  let polling = false;
+  let mustPoll = false; // no stream comes through here (a proxy holds them back): the page asks, from now on
+  let pollGen = 0;
+  let retryTimer = null;
+  let silentTimer = null;
+  let firstTimer = null;
+  let hideTimer = null;
+  const SILENT = 40000; // the manager gives a sign every 15 s: none for this long, the stream is gone
+  const numberOf = p => { const k = p.lastIndexOf('-'); return k < 0 ? -1 : Number(p.slice(k + 1)); };
+  // missed: lines that came and went before the page had them (thousands at once)
+  const missed = n => { if (n > 0) addLines(['── ' + n + ' line' + (n === 1 ? '' : 's') + ' not shown here: they came faster than they are kept ──']); };
+
+  function closeStream() {
     if (es) { es.close(); es = null; }
-    const tick = async () => {
-      try {
-        const r = await api('GET', consoleURL + '?since=' + next);
-        if (next === 0) { clear(pre); }
-        if (r.lines.length) addLines(r.lines);
-        if (next === 0) pre.scrollTop = pre.scrollHeight;
-        next = r.next;
-      } catch (e) { /* the state polling shows the connection */ }
-    };
-    poll = setInterval(tick, 1500);
-    tick();
+    clearTimeout(retryTimer); clearTimeout(silentTimer); clearTimeout(firstTimer);
+    retryTimer = silentTimer = firstTimer = null;
+  }
+  // left: the page shows something else without having closed the tab (signed out): the console lets go
+  let shown = false; // it was on the page (it is put there just after it is made)
+  const left = () => {
+    if (pre.isConnected) shown = true;
+    else if (shown && !dead) destroy();
+    return dead;
   };
-  if (S.polling) {
-    pollConsole();
-  } else {
-    es = new EventSource(consoleURL);
-    let got = false;
-    const watchdog = setTimeout(() => { if (!got) pollConsole(); }, 6000);
-    es.addEventListener('init', e => { got = true; clearTimeout(watchdog); clear(pre); addLines(JSON.parse(e.data)); pre.scrollTop = pre.scrollHeight; });
-    es.addEventListener('lines', e => addLines(JSON.parse(e.data)));
+  function heard(e) {
+    // the stream is there
+    clearTimeout(firstTimer); firstTimer = null;
+    fails = 0;
+    everLive = true;
+    setState('live');
+    const place = e && e.lastEventId;
+    if (place || (e && e.type === 'ping')) {
+      // a manager that gives signs: silence means the stream is gone
+      clearTimeout(silentTimer);
+      silentTimer = setTimeout(() => { if (!dead && !polling) openStream(); }, SILENT);
+    }
+    return place;
+  }
+  function openStream() {
+    closeStream();
+    if (polling || left()) return;
+    const mine = es = new EventSource(consoleURL + (pos ? '?from=' + encodeURIComponent(pos) : ''));
+    if (!['live', 'retry'].includes(stateEl.dataset.st)) setState('wait');
+    // Nothing at all for a while: a proxy holds the stream back, the page asks instead. Where streams work, this
+    // one is only slow to come (a machine far away, just back): tried again.
+    firstTimer = setTimeout(() => {
+      if (es !== mine || left()) return;
+      if (everLive) openStream(); else startPolling();
+    }, 6000);
+    es.addEventListener('init', e => {
+      if (es !== mine) return;
+      const place = heard(e);
+      reset(JSON.parse(e.data));
+      if (place) pos = place;
+    });
+    es.addEventListener('lines', e => {
+      if (es !== mine) return;
+      const place = heard(e);
+      const lines = JSON.parse(e.data);
+      if (place) {
+        if (pos && place.split('-')[0] === pos.split('-')[0]) missed(numberOf(place) - lines.length - numberOf(pos));
+        pos = place;
+      }
+      addLines(lines);
+    });
+    es.addEventListener('ping', e => { if (es === mine) heard(e); });
+    es.onerror = () => {
+      if (es !== mine) return;
+      // cut (the network, the manager started again, a machine that went offline): again, from where it was
+      closeStream();
+      if (left()) return;
+      setState('retry');
+      fails++;
+      if (fails >= 5 && !everLive) { startPolling(); return; } // no stream ever came here: the page asks instead
+      retryTimer = setTimeout(openStream, [300, 1000, 2000, 4000][fails - 1] || 5000);
+    };
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // startPolling: the page asks for the lines after the last it has; the manager answers when one comes.
+  async function startPolling() {
+    if (polling || dead) return;
+    closeStream();
+    polling = mustPoll = true;
+    const gen = ++pollGen;
+    let next = pos ? numberOf(pos) : -1;
+    let epoch = pos ? pos.split('-')[0] : '';
+    while (gen === pollGen && !left()) {
+      const t0 = performance.now();
+      try {
+        const r = await api('GET', consoleURL + '?since=' + next + '&wait=20' + (epoch ? '&epoch=' + encodeURIComponent(epoch) : ''));
+        if (gen !== pollGen || dead) return;
+        if (next < 0 || r.next < next || (r.epoch && epoch && r.epoch !== epoch)) reset(r.lines);
+        else { missed(r.missed); addLines(r.lines); }
+        next = r.next;
+        if (r.epoch) { epoch = r.epoch; pos = epoch + '-' + next; }
+        setState('live');
+        // a manager that does not wait (an older one): not asked more than every 1.5 s
+        const took = performance.now() - t0;
+        if (!r.lines.length && took < 1000) await sleep(1500 - took);
+      } catch (e) {
+        if (gen !== pollGen || left()) return;
+        setState('retry'); // the state shown at the top tells why
+        await sleep(2000);
+      }
+    }
+  }
+  function stopPolling() { pollGen++; polling = false; }
+  function start() {
+    if (dead) return;
+    if (S.polling || mustPoll) startPolling(); else openStream();
+  }
+  // In the background for a while: the console lets go of its connection (a browser has few for a site), and takes
+  // it back when the page shows again, from the last line it had.
+  const onVisible = () => {
+    clearTimeout(hideTimer); hideTimer = null;
+    if (document.hidden) {
+      hideTimer = setTimeout(() => { closeStream(); stopPolling(); setState('paused'); }, 30000);
+      return;
+    }
+    draw();
+    if (!es && !polling) { fails = 0; start(); }
+  };
+  const onOnline = () => { if (!document.hidden && !polling && stateEl.dataset.st !== 'live') { fails = 0; openStream(); } };
+  document.addEventListener('visibilitychange', onVisible);
+  window.addEventListener('online', onOnline);
+  start();
+  function destroy() {
+    dead = true;
+    closeStream();
+    stopPolling();
+    clearTimeout(hideTimer); clearTimeout(drawTimer);
+    if (drawing) cancelAnimationFrame(drawing);
+    if (sized) sized.disconnect();
+    document.removeEventListener('visibilitychange', onVisible);
+    window.removeEventListener('online', onOnline);
   }
 
   // Command input with history (↑ ↓)
@@ -1738,6 +1935,7 @@ function tabConsole(id) {
     if (e.key === 'ArrowUp' && hi > 0) { hi--; inp.value = hist[hi]; e.preventDefault(); }
     if (e.key === 'ArrowDown') { if (hi < hist.length - 1) { hi++; inp.value = hist[hi]; } else { hi = hist.length; inp.value = ''; } e.preventDefault(); }
   });
+  let pending = 0; // commands sent, not answered yet
   const form = h('form', {
     onsubmit: async e => {
       e.preventDefault();
@@ -1747,10 +1945,13 @@ function tabConsole(id) {
       store.set(histKey, hist);
       hi = hist.length;
       inp.value = '';
-      send.disabled = true;
-      try { await api('POST', 'api/servers/' + encodeURIComponent(id) + '/rcon', { command: cmd }); } catch (ex) { toast(ex.message, 'bad'); }
-      send.disabled = false;
       inp.focus();
+      // The next command can be typed and sent at once: the answer of this one shows in the console when it comes.
+      setFollow(true);
+      pending++;
+      send.classList.add('busy');
+      try { await api('POST', 'api/servers/' + encodeURIComponent(id) + '/rcon', { command: cmd }); } catch (ex) { toast(ex.message, 'bad'); }
+      if (--pending === 0) send.classList.remove('busy');
     },
   }, inp, send);
 
@@ -1779,11 +1980,11 @@ function tabConsole(id) {
   update();
 
   const el = h('div', null, note, h('div', { class: 'console' },
-    h('div', { class: 'bar2' }, quickEl, h('span', { class: 'spacer' }), filterIn, followBtn,
-      h('button', { class: 'btn sm ghost', title: 'Clear the view', onclick: () => clear(pre) }, icon('trash'))),
-    pre, form));
+    h('div', { class: 'bar2' }, quickEl, h('span', { class: 'spacer' }), stateEl, filterIn, followBtn,
+      h('button', { class: 'btn sm ghost', title: 'Clear the view', onclick: () => { queue = []; clear(pre); unseen = 0; newBtn.classList.add('hidden'); } }, icon('trash'))),
+    h('div', { class: 'conview' }, pre, newBtn), form));
   setTimeout(() => inp.focus(), 50);
-  return { el, update, destroy: () => { if (es) es.close(); if (poll) clearInterval(poll); } };
+  return { el, update, destroy };
 }
 
 /* ---------- Files ---------- */

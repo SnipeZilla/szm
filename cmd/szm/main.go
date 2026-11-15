@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,7 +41,7 @@ import (
 // szm.ico), run "go generate ./cmd/szm" to write rsrc_windows_amd64.syso again.
 //
 //go:generate go run ../../tools/mkres
-var version = "2.0.2"
+var version = "2.0.3"
 
 const serviceName = "SnipeZillaServerManager"
 
@@ -123,6 +124,12 @@ func main() {
 		}
 		pid, _ := strconv.Atoi(args[1])
 		rows, _ := strconv.Atoi(args[2])
+		if len(args) > 3 && args[3] == "follow" {
+			// it stays with the server's console and gives its rows as they come: proc.FollowConsoleWindow
+			debug.SetGCPercent(25) // a small program that runs as long as the server: little memory
+			err = proc.FollowConsole(pid, rows, os.Stdout)
+			break
+		}
 		err = proc.DumpConsole(pid, rows, os.Stdout)
 	case "__ctrlc": // the helper sending Ctrl+C to a server's console (Windows): proc.Interrupt
 		if len(args) < 2 {

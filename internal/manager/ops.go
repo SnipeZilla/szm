@@ -1470,6 +1470,10 @@ func (m *Manager) RconBy(id, command, by string) (string, error) {
 		i.say("] "+command, "[rcon] "+terr.Error())
 		return "", terr
 	}
+	if by != "" {
+		m.WatchConsole(id) // someone typed it: what the server writes of it is read at once
+	}
+	i.say("] " + command) // shown at once: its answer follows when the server gives it
 	i.mu.Lock()
 	before := i.consoleN // the console log lines read while RCON answers: not shown twice
 	i.mu.Unlock()
@@ -1487,7 +1491,6 @@ func (m *Manager) RconBy(id, command, by string) (string, error) {
 	}
 	out, err := m.sendRcon(s, g, command, 5*time.Second)
 	i.noteCommand(by, command, false, err)
-	i.say("] " + command)
 	if err != nil {
 		if stop {
 			i.mu.Lock()
@@ -1629,6 +1632,8 @@ func (m *Manager) openConsole(i *Instance, s config.Server, g *games.Game, adopt
 	if !s.ConsoleLog || (g.IsOther() && g.ConsoleLog == "") {
 		return
 	}
+	i.conMu.Lock() // no reader in the middle of the log
+	defer i.conMu.Unlock()
 	p := consolePath(s, g)
 	var off int64
 	if st, err := os.Stat(p); err == nil {
@@ -1649,19 +1654,56 @@ func (m *Manager) openConsole(i *Instance, s config.Server, g *games.Game, adopt
 	if adopt && off > 0 {
 		i.consoleOff = -off // negative: skip to the next line first
 	}
+	i.conPath, i.conPathAt = "", time.Time{}
 	i.mu.Unlock()
 }
 
+// readConsole adds to a server's console what it wrote since the last time: every second by the manager, ten times
+// a second while someone looks at its console (followConsoles).
 func (m *Manager) readConsole(i *Instance, s config.Server, g *games.Game) {
 	if !s.ConsoleLog || (g.IsOther() && g.ConsoleLog == "") {
 		return
 	}
 	m.captureWindow(i, s, g) // CS2 on Windows: its window to its log
-	path := consolePath(s, g)
-	st, err := os.Stat(path) // most seconds nothing new: no need to open it
+	m.readLog(i, s, g)
+}
+
+const (
+	logChunk  = 256 << 10 // the console log is read by pieces of this size
+	logChunks = 16        // ... this many at a time at most (4 MB): the rest the next time
+)
+
+// readLog adds to the console the lines its log got since the last time. One reader at a time: called while
+// another reads, it leaves (the other one takes them).
+func (m *Manager) readLog(i *Instance, s config.Server, g *games.Game) {
+	if !i.conMu.TryLock() {
+		return
+	}
+	defer i.conMu.Unlock()
+	now := time.Now()
+	i.mu.Lock()
+	path := i.conPath
+	if now.Sub(i.conPathAt) > 3*time.Second {
+		path = "" // looked for again now and then: the game may write it elsewhere than it should
+	}
+	off := i.consoleOff
+	// While someone looks at it, the log is opened once a second whatever its size in its folder says: Windows may
+	// give the size of a file a program keeps open late, and a console that waits for it looks stuck.
+	sure := i.watchedLocked(now) && now.Sub(i.conSure) >= sureEvery
+	i.mu.Unlock()
+	found := path == ""
+	if found {
+		path = consolePath(s, g)
+	}
+	st, err := os.Stat(path) // most of the time nothing new: no need to open it
+	if err != nil && !found {
+		path, found = consolePath(s, g), true // no longer where it was
+		st, err = os.Stat(path)
+	}
 	if err != nil {
 		// Running for a minute, -condebug on, and still no log: say so once, rather than a console that stays empty
 		i.mu.Lock()
+		i.conPath, i.conPathAt = "", time.Time{}
 		since, pid := i.since, i.pid
 		tell := pid > 0 && !since.IsZero() && time.Since(since) > time.Minute && !i.consoleMissingSaid.Equal(since)
 		if tell {
@@ -1680,17 +1722,19 @@ func (m *Manager) readConsole(i *Instance, s config.Server, g *games.Game) {
 		return
 	}
 	i.mu.Lock()
-	off := i.consoleOff
+	if found {
+		i.conPath, i.conPathAt = path, now
+	}
+	if sure {
+		i.conSure = now
+	}
 	i.mu.Unlock()
 	skipFirst := off < 0
 	if skipFirst {
 		off = -off
 	}
-	if st.Size() < off {
-		off = 0 // the server started a new log
-		skipFirst = false
-	}
-	if st.Size() == off {
+	size := st.Size()
+	if size == off && !sure {
 		return
 	}
 	f, err := os.Open(path)
@@ -1698,46 +1742,63 @@ func (m *Manager) readConsole(i *Instance, s config.Server, g *games.Game) {
 		return
 	}
 	defer f.Close()
-	n := min(st.Size()-off, 256<<10)
-	buf := make([]byte, n)
-	k, err := f.ReadAt(buf, off)
-	if err != nil && !errors.Is(err, io.EOF) {
+	if fst, err := f.Stat(); err == nil {
+		size = fst.Size() // of the open file: its true size
+	}
+	if size < off {
+		off = 0 // the server started a new log
+		skipFirst = false
+	}
+	if size == off {
 		return
 	}
-	buf, n = buf[:k], int64(k)
-	end := bytes.LastIndexByte(buf, '\n')
-	if end < 0 {
-		if n < 256<<10 {
-			return // half a line: wait for the rest
-		}
-		end = len(buf) - 1
-	}
-	chunk := buf[:end+1]
 	var lines []string
-	first := true
-	for len(chunk) > 0 {
-		raw := chunk
-		if k := bytes.IndexByte(chunk, '\n'); k >= 0 {
-			raw, chunk = chunk[:k], chunk[k+1:]
-		} else {
-			chunk = nil
+	var buf []byte
+	moved := false
+	for n := 0; n < logChunks && off < size; n++ {
+		want := int(min(size-off, logChunk))
+		if cap(buf) < want {
+			buf = make([]byte, want)
 		}
-		if first && skipFirst {
-			first = false
-			continue
+		k, err := f.ReadAt(buf[:want], off)
+		if (err != nil && !errors.Is(err, io.EOF)) || k == 0 {
+			break
 		}
-		first = false
-		l := strings.TrimRight(string(raw), "\r")
-		if l == "" {
-			continue
+		chunk := buf[:k]
+		end := bytes.LastIndexByte(chunk, '\n')
+		if end < 0 {
+			if k < logChunk {
+				break // half a line: wait for the rest
+			}
+			end = k - 1 // a line longer than a piece: cut there
 		}
-		lines = append(lines, config.Redact(strings.ToValidUTF8(l, "?")))
+		chunk = chunk[:end+1]
+		for len(chunk) > 0 {
+			raw := chunk
+			if e := bytes.IndexByte(chunk, '\n'); e >= 0 {
+				raw, chunk = chunk[:e], chunk[e+1:]
+			} else {
+				chunk = nil
+			}
+			if skipFirst {
+				skipFirst = false // the end of a line whose start was not read
+				continue
+			}
+			raw = bytes.TrimRight(raw, "\r")
+			if len(raw) == 0 {
+				continue
+			}
+			lines = append(lines, config.Redact(strings.ToValidUTF8(string(raw), "?")))
+		}
+		off += int64(end + 1)
+		moved = true
+	}
+	if !moved {
+		return
 	}
 	i.mu.Lock()
-	i.consoleOff = off + int64(end+1)
+	i.consoleOff = off
 	lines = i.unhidden(lines)
 	i.mu.Unlock()
-	if len(lines) > 0 {
-		i.say(lines...)
-	}
+	i.say(lines...)
 }

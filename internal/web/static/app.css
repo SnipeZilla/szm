@@ -346,10 +346,26 @@ table.list td.num, table.list th.num { text-align: right; font-variant-numeric: 
   background: #060a16; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
 }
 .console .bar2 { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); background: var(--bg-2); flex-wrap: wrap; }
+.console .conview { flex: 1; min-height: 0; position: relative; display: flex; }
 .console pre {
   flex: 1; margin: 0; overflow: auto; padding: 12px 14px; font: 12.5px/1.55 var(--mono); color: #c8d0ea;
   white-space: pre-wrap; word-break: break-word;
+  contain: layout paint; /* thousands of lines: their layout is the console's own, not the page's */
 }
+/* the lines that came while the view is up in the console: a click goes to them */
+.console .connew {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2;
+  height: 28px; padding: 0 14px; border-radius: 99px; border: 1px solid rgba(61, 126, 255, .7);
+  background: var(--accent); color: #fff; font: 600 12.5px var(--sans); cursor: pointer; box-shadow: var(--shadow);
+}
+.console .connew:hover { background: var(--accent-2); }
+/* the state of the console's connection: a dot */
+.console .constate { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; margin-right: 2px; }
+.console .constate[data-st="live"] { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.console .constate[data-st="retry"] { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); animation: conblink 1s ease-in-out infinite; }
+.console .constate[data-st="wait"] { animation: conblink 1s ease-in-out infinite; }
+@keyframes conblink { 50% { opacity: .35; } }
+.console form .btn.busy { opacity: .75; }
 .console pre .c-cmd { color: #8fb8ff; font-weight: 600; }
 .console pre .c-steam { color: #7fb5ff; }
 .console pre .c-err { color: #ff8d98; }

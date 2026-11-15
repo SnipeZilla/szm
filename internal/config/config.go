@@ -972,7 +972,22 @@ func (s *Server) HideSecrets(text string) string {
 
 // Redact hides the login tokens of a text (a command line, a log line).
 func Redact(text string) string {
+	if !hasTokenCommand(text) {
+		return text // nearly every line: no need to look closer
+	}
 	return tokenLike.ReplaceAllString(text, `${1}${2}••••••••${3}`)
+}
+
+// hasTokenCommand tells whether a text may have the command tokenLike looks for: it has "teamaccount", in any case
+// (letters that no other character than their capital stands for).
+func hasTokenCommand(text string) bool {
+	const part = "teamaccount"
+	for k := 0; k+len(part) <= len(text); k++ {
+		if text[k]|0x20 == 't' && strings.EqualFold(text[k:k+len(part)], part) {
+			return true
+		}
+	}
+	return false
 }
 
 // QuoteArgs shows a command line, with quotes around what has spaces.

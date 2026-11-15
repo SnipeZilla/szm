@@ -426,12 +426,43 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// How a console's lines go to the page that shows it.
+const (
+	consoleGather     = 20 * time.Millisecond  // a new line waits this long for those that come with it
+	consoleGatherBusy = 100 * time.Millisecond // ... and until this long after the last send: ten sends a second at most
+	consoleWrite      = 30 * time.Second       // a page that does not take what is sent for this long is let go
+	consoleWaitMax    = 25 * time.Second       // the longest a page that polls is kept waiting for a line
+)
+
+// consolePing: with nothing to send, the page still hears from the stream this often, and so knows a stream that
+// went silent (a proxy, a network that dropped it without a word) from a server that says nothing.
+var consolePing = 15 * time.Second
+
+// consoleStream gives a server's console to the page.
+//
+//	GET …/console                        a live stream (Server-Sent Events): "init" with the lines kept, then "lines"
+//	                                     with the new ones as they come, and "ping" when there is none for a while.
+//	                                     Each has the place of the reader as its id: <run of the manager>-<number
+//	                                     of the next line>.
+//	GET …/console?from=<id>              the stream again from that place (after a cut): only the lines it misses,
+//	                                     as "lines"; "init" if they are no longer kept. A browser that reconnects
+//	                                     by itself sends the id as Last-Event-ID: the same.
+//	GET …/console?since=<n>&wait=<sec>   for a page that can not keep a stream open (a proxy holding it back): the
+//	                                     lines after line n, waited for up to wait seconds when there is none yet.
+//
+// The lines are read by their numbers, never pushed: none is lost when many come at once or the page is slow.
 func (s *Server) consoleStream(w http.ResponseWriter, r *http.Request, u *User) error {
 	id := r.PathValue("id")
-	if since := r.URL.Query().Get("since"); since != "" {
-		n, _ := strconv.ParseInt(since, 10, 64)
-		lines, next := s.M.ConsoleSince(id, n)
-		return writeJSON(w, map[string]any{"lines": lines, "next": next})
+	q := r.URL.Query()
+	if since := q.Get("since"); since != "" {
+		n, err := strconv.ParseInt(since, 10, 64)
+		if e := q.Get("epoch"); err != nil || (e != "" && e != manager.ConsoleEpoch) {
+			n = -1 // the manager started again since: its lines from the start
+		}
+		sec, _ := strconv.ParseFloat(q.Get("wait"), 64)
+		wait := min(time.Duration(max(sec, 0)*float64(time.Second)), consoleWaitMax)
+		lines, next, missed := s.M.WaitConsole(r.Context(), id, n, wait)
+		return writeJSON(w, map[string]any{"lines": lines, "next": next, "missed": missed, "epoch": manager.ConsoleEpoch})
 	}
 	fl, ok := w.(http.Flusher)
 	if !ok {
@@ -441,37 +472,76 @@ func (s *Server) consoleStream(w http.ResponseWriter, r *http.Request, u *User) 
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Accel-Buffering", "no")
+	rc := http.NewResponseController(w)
+	send := func(event string, lines []string, next int64) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(consoleWrite)) // not every writer has one (a hub's request): then none
+		var err error
+		if lines == nil {
+			_, err = fmt.Fprintf(w, "event: %s\ndata: 1\n\n", event)
+		} else {
+			b, _ := json.Marshal(lines)
+			_, err = fmt.Fprintf(w, "event: %s\nid: %s-%d\ndata: %s\n\n", event, manager.ConsoleEpoch, next, b)
+		}
+		if err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+
+	// Subscribed first, read after: a line that comes in between wakes the stream.
 	c := s.M.SubscribeConsole(id)
 	defer s.M.UnsubscribeConsole(id, c)
-	b, _ := json.Marshal(s.M.Console(id))
-	fmt.Fprintf(w, "event: init\ndata: %s\n\n", b)
-	fl.Flush()
-	ping := time.NewTicker(25 * time.Second)
+	from := q.Get("from")
+	if from == "" {
+		from = r.Header.Get("Last-Event-ID")
+	}
+	n, event := int64(-1), "init"
+	if e, v, cut := strings.Cut(from, "-"); cut && e == manager.ConsoleEpoch {
+		if k, err := strconv.ParseInt(v, 10, 64); err == nil && k >= 0 {
+			n, event = k, "lines"
+		}
+	}
+	lines, next, missed := s.M.ConsoleFrom(id, n)
+	if missed > 0 || n > next {
+		event = "init" // too far behind, or a place this console never had: all the lines kept
+	}
+	if !send(event, lines, next) {
+		return nil
+	}
+	n = next
+
+	ping := time.NewTicker(consolePing)
 	defer ping.Stop()
-	batch := []string{}
-	flush := time.NewTicker(150 * time.Millisecond)
-	defer flush.Stop()
+	gather := time.NewTimer(time.Hour)
+	gather.Stop()
+	defer gather.Stop()
+	gathering := false
+	var sent time.Time
 	for {
 		select {
 		case <-r.Context().Done():
 			return nil
-		case l := <-c:
-			batch = append(batch, l)
-		case <-flush.C:
-			if len(batch) == 0 {
+		case <-c:
+			if !gathering {
+				gather.Reset(max(consoleGather, consoleGatherBusy-time.Since(sent)))
+				gathering = true
+			}
+		case <-gather.C:
+			gathering = false
+			lines, next, _ := s.M.ConsoleFrom(id, n)
+			if len(lines) == 0 {
 				continue
 			}
-			b, _ := json.Marshal(batch)
-			batch = batch[:0]
-			if _, err := fmt.Fprintf(w, "event: lines\ndata: %s\n\n", b); err != nil {
+			if !send("lines", lines, next) {
 				return nil
 			}
-			fl.Flush()
+			n, sent = next, time.Now()
+			ping.Reset(consolePing)
 		case <-ping.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			if !send("ping", nil, 0) {
 				return nil
 			}
-			fl.Flush()
 		}
 	}
 }

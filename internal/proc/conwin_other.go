@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"context"
 	"errors"
 	"io"
 )
@@ -15,6 +16,14 @@ func ReadConsoleWindow(pid, rows int) ([]string, error) {
 }
 
 func DumpConsole(pid, rows int, w io.Writer) error {
+	return errors.New("reading a console window is for Windows")
+}
+
+func FollowConsoleWindow(ctx context.Context, pid, rows int, each func(rows []string)) error {
+	return errors.New("reading a console window is for Windows")
+}
+
+func FollowConsole(pid, rows int, w io.Writer) error {
 	return errors.New("reading a console window is for Windows")
 }
 

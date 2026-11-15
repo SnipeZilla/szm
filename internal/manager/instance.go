@@ -100,7 +100,7 @@ type Instance struct {
 	winErrPid    int
 	goodCPU      float64 // the last use measured before a sudden drop (the process ending): for crash reports
 	goodMem      uint64
-	consoleSub   map[chan string]struct{}
+	consoleSub   map[chan struct{}]struct{}
 	hidden       []hiddenLine         // lines already shown (an RCON answer) or not to show: skipped if the log has them too
 	sent         []SentCommand        // the last commands sent through RCON (commands.go)
 	noMap        map[string]time.Time // maps its console said it does not have (nomap.go)
@@ -112,6 +112,22 @@ type Instance struct {
 	// cantStart: why it can not start until something is installed on Windows (a DLL it needs is not there), and
 	// so it waits: shown until it is started again
 	cantStart string
+
+	// Its console, for who looks at it (console.go). consoleSub (above): who waits for new lines; woken, they read
+	// them by their numbers. conMu: one reader of the console log at a time (the manager's every second, the fast
+	// one while someone looks, the reader of its window).
+	conMu      sync.Mutex
+	conPath    string    // where its log is: looked for again every few seconds
+	conPathAt  time.Time // ... last then
+	conSure    time.Time // the log was last opened to see its true size, whatever its folder said
+	watchUntil time.Time // its console was asked for lately (a page that polls, a command sent): read often until then
+
+	// The reader of its console window (conwin.go)
+	winFollow      int       // the process whose window a reader follows (0: none)
+	winFollowFor   int       // the process the last reader was started for
+	winFollowAt    time.Time // ... then
+	winFollowFails int       // readers that ended at once, in a row
+	winOneShot     int       // the process whose window is read every second instead, as its reader does not stay
 
 	backupMu sync.Mutex // one backup at a time
 
@@ -179,8 +195,12 @@ func (i *Instance) unhidden(lines []string) []string {
 	return out
 }
 
+// consoleKeep is how many lines of a console are kept in memory: what a page gets when it opens the Console tab,
+// and how far behind a reader can be without missing a line.
+const consoleKeep = 2000
+
 func newInstance(id string) *Instance {
-	return &Instance{ID: id, status: StatusStopped, console: newRing(600), consoleSub: map[chan string]struct{}{}}
+	return &Instance{ID: id, status: StatusStopped, console: newRing(consoleKeep), consoleSub: map[chan struct{}]struct{}{}}
 }
 
 // View is a server as the web interface shows it.
@@ -234,38 +254,66 @@ type View struct {
  * Console: the last lines of the server's console log and of the operations, and who listens to them
  * ------------------------------------------------------------------------------------------------------------- */
 
+// ring keeps the last lines. Its slice grows with the lines up to its size: a server that says little uses little.
 type ring struct {
 	lines []string
+	size  int
 	next  int
 	full  bool
 }
 
-func newRing(n int) *ring { return &ring{lines: make([]string, n)} }
+func newRing(n int) *ring { return &ring{size: n} }
 
 func (r *ring) add(s string) {
+	if !r.full && len(r.lines) < r.size {
+		r.lines = append(r.lines, s)
+		if len(r.lines) == r.size {
+			r.full = true
+		}
+		return
+	}
 	r.lines[r.next] = s
 	r.next++
 	if r.next == len(r.lines) {
-		r.next, r.full = 0, true
+		r.next = 0
 	}
 }
 
-func (r *ring) all() []string {
+func (r *ring) len() int { return len(r.lines) }
+
+func (r *ring) all() []string { return r.last(len(r.lines)) }
+
+// last gives the last n lines (all of them when there are fewer), oldest first.
+func (r *ring) last(n int) []string {
+	have := len(r.lines)
+	if n > have {
+		n = have
+	}
+	if n <= 0 {
+		return []string{}
+	}
+	out := make([]string, 0, n)
 	if !r.full {
-		return append([]string(nil), r.lines[:r.next]...)
+		return append(out, r.lines[have-n:]...)
 	}
-	out := make([]string, 0, len(r.lines))
-	out = append(out, r.lines[r.next:]...)
-	return append(out, r.lines[:r.next]...)
+	// the oldest is at next
+	start := (r.next + have - n) % have
+	if start+n <= have {
+		return append(out, r.lines[start:start+n]...)
+	}
+	out = append(out, r.lines[start:]...)
+	return append(out, r.lines[:n-(have-start)]...)
 }
 
-// say adds lines to the console and hands them to the listeners. The lock must not be held.
+// say adds lines to the console and wakes who waits for them. The lock must not be held.
+//
+// The lines are numbered (consoleN): a reader asks for those after the last it has (Manager.ConsoleSince), so none
+// is lost however many come at once, and none is handed over while the lock is held.
 func (i *Instance) say(lines ...string) {
-	i.mu.Lock()
-	subs := make([]chan string, 0, len(i.consoleSub))
-	for c := range i.consoleSub {
-		subs = append(subs, c)
+	if len(lines) == 0 {
+		return
 	}
+	i.mu.Lock()
 	for _, l := range lines {
 		i.console.add(l)
 		if n := noSuchMap(l); n != "" {
@@ -273,13 +321,11 @@ func (i *Instance) say(lines ...string) {
 		}
 	}
 	i.consoleN += int64(len(lines))
-	i.mu.Unlock()
-	for _, l := range lines {
-		for _, c := range subs {
-			select {
-			case c <- l:
-			default:
-			}
+	for c := range i.consoleSub {
+		select {
+		case c <- struct{}{}:
+		default: // it has not looked yet: it will see these too
 		}
 	}
+	i.mu.Unlock()
 }

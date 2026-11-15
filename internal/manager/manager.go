@@ -78,6 +78,11 @@ type Manager struct {
 	netTried time.Time       // last start of the count
 
 	load loadSampler // the machine's CPU and network (load.go)
+
+	// the consoles someone looks at: their logs are read many times a second (console.go)
+	conMu    sync.Mutex
+	conWatch map[string]struct{}
+	conWake  chan struct{}
 }
 
 // New prepares a manager. Run starts it.
@@ -94,6 +99,7 @@ func New(cfg *config.Config, cat games.Catalog, dataDir string) *Manager {
 		cacheLks:  map[string]*sync.Mutex{},
 		lastCheck: map[string]time.Time{},
 		checkNow:  make(chan struct{}, 1),
+		conWake:   make(chan struct{}, 1),
 	}
 	m.Steam.Path = m.SteamCmdPath()
 	m.SetCatalog(cat)
@@ -148,6 +154,7 @@ func (m *Manager) Run(ctx context.Context) {
 	go m.updateChecker(ctx)
 	go m.addonChecker(ctx)
 	go m.sampleLoad(ctx)
+	go m.followConsoles(ctx)
 	if m.Debug() {
 		go m.logMemory(ctx)
 	}
@@ -1294,46 +1301,6 @@ func (m *Manager) view(s config.Server) View {
 		}
 	}
 	return v
-}
-
-// Console gives the last lines of a server's console.
-func (m *Manager) Console(id string) []string {
-	i := m.instance(id)
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.console.all()
-}
-
-// ConsoleSince gives the lines added after line n (0: all it keeps), and the number to ask from next time. For a
-// browser that can not keep a live stream open (a proxy holding it back).
-func (m *Manager) ConsoleSince(id string, n int64) ([]string, int64) {
-	i := m.instance(id)
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	all := i.console.all()
-	first := i.consoleN - int64(len(all)) // number of the line before all[0]
-	if n < first || n > i.consoleN {
-		n = first
-	}
-	return all[n-first:], i.consoleN
-}
-
-// SubscribeConsole gives a channel that receives the new lines of a server's console.
-func (m *Manager) SubscribeConsole(id string) chan string {
-	i := m.instance(id)
-	c := make(chan string, 256)
-	i.mu.Lock()
-	i.consoleSub[c] = struct{}{}
-	i.mu.Unlock()
-	return c
-}
-
-// UnsubscribeConsole stops a channel of SubscribeConsole.
-func (m *Manager) UnsubscribeConsole(id string, c chan string) {
-	i := m.instance(id)
-	i.mu.Lock()
-	delete(i.consoleSub, c)
-	i.mu.Unlock()
 }
 
 // Machine is what the web interface shows of the machine.
