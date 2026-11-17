@@ -399,6 +399,9 @@ table.list td.num, table.list th.num { text-align: right; font-variant-numeric: 
 .files .acts { opacity: 0; transition: opacity .1s; white-space: nowrap; text-align: right; }
 .files tr:hover .acts, .files tr:focus-within .acts { opacity: 1; }
 .dropzone { position: relative; }
+html.waiting, html.waiting * { cursor: progress !important; }
+.files tr.opening td.name { opacity: .55; }
+.dropzone.loading tbody { opacity: .6; transition: opacity .15s .15s; }
 .dropzone.over::after {
   content: "Drop to upload"; position: absolute; inset: 0; display: grid; place-items: center;
   background: rgba(61, 126, 255, .15); border: 2px dashed var(--accent); border-radius: var(--radius);
@@ -667,7 +670,12 @@ ul.plain { list-style: none; padding: 0; margin: 6px 0 0; display: grid; gap: 4p
 .wstitle { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wsacts { display: flex; gap: 6px; padding: 6px 10px 10px; flex-wrap: wrap; align-items: center; }
 .wsacts .icon { margin-left: auto; }
-.wscoll { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-2); }
+.wscoll { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.wsgroup { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.wsgroup.played { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.wscollrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.wsfold svg { transition: transform .12s; }
+.wsfold.open svg { transform: rotate(90deg); }
 
 /* Settings: one card per main function, a side list to jump between them */
 .setlayout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -86,6 +88,7 @@ func (s *Server) initLinks() error {
 		})
 	}
 	s.M.RemoteServer = s.remoteServer
+	s.M.RemoteCards = s.remoteCards
 	s.node = link.NewClient(st)
 	s.node.Log = s.M.Log
 	s.node.State = func() map[string]any {
@@ -205,6 +208,67 @@ func (s *Server) remoteServer(id string) *notify.Server {
 		return out
 	}
 	return nil
+}
+
+// offlineAfter: a machine that is not connected for this long is said offline (a link cut for a moment is not).
+const offlineAfter = 90 * time.Second
+
+// remoteCards gives the servers of the linked machines for the status cards: as each machine last said them. A
+// machine that is not connected for a while: its servers are shown with no news, rather than as they were.
+func (s *Server) remoteCards() []manager.StatusCard {
+	var out []manager.StatusCard
+	for _, n := range s.links.Get().Nodes {
+		rm := s.hub.Remote(n.ID)
+		if rm == nil {
+			continue
+		}
+		var mc struct {
+			IPs []string `json:"ips"`
+		}
+		_ = json.Unmarshal(rm.Machine, &mc)
+		on, _ := s.hub.Online(n.ID)
+		for _, raw := range rm.Servers {
+			var v manager.View
+			if json.Unmarshal(raw, &v) != nil || v.ID == "" {
+				continue
+			}
+			c := manager.CardOf(v, mc.IPs)
+			c.Remote = true
+			if !on && time.Since(rm.At) > offlineAfter {
+				c.State, c.Note, c.Since = notify.CardUnknown, "its machine is not reachable", rm.At.Unix()
+				c.Map, c.Players, c.Max, c.Bots, c.Locked = "", 0, 0, 0, false
+			}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// joinPage is what a status card's "Join via Steam" opens when the Join link of the settings is this manager's:
+// Discord opens web links only, this page opens Steam on the server. It knows nothing and tells nothing: the
+// address is in the link, and only an address (a name or IP and a port) is taken.
+func (s *Server) joinPage(w http.ResponseWriter, r *http.Request) {
+	a := strings.TrimSpace(r.URL.Query().Get("a"))
+	if !manager.ValidJoinAddress(a) {
+		http.Error(w, "Not a server address.", http.StatusBadRequest)
+		return
+	}
+	link := "steam://connect/" + a
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	fmt.Fprintf(w, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><meta http-equiv="refresh" content="0;url=%[1]s">
+<title>Join %[2]s</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#12141c;color:#e7eaf3;font:16px/1.5 system-ui,sans-serif}
+main{text-align:center;padding:24px}code{font:15px ui-monospace,Consolas,monospace;background:#1f2330;padding:3px 8px;border-radius:6px}
+a.b{display:inline-block;margin:18px 0 10px;padding:12px 26px;border-radius:10px;background:#3d7eff;color:#fff;font-weight:600;text-decoration:none}
+p{color:#9aa3bd;margin:6px 0}</style></head>
+<body><main><h1>Opening Steam…</h1><p>Server <code>%[2]s</code></p>
+<a class="b" href="%[1]s">Join the server</a>
+<p>Nothing happens? Click the button, or in the game's console type <code>connect %[2]s</code></p></main></body></html>
+`, html.EscapeString(link), html.EscapeString(a))
 }
 
 // linkedUser is the hub's user of a request that came through the link (on a node).

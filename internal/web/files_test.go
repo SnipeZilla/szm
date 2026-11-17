@@ -81,3 +81,15 @@ func TestUsersFileChanged(t *testing.T) {
 		t.Fatal("the old password came back")
 	}
 }
+
+// A folder uploaded keeps its tree, and never leaves the folder it is uploaded into.
+func TestUploadRel(t *testing.T) {
+	for in, want := range map[string]string{"": "", "maps": "maps", `cfg\sub`: "cfg/sub", "/a//b/./c/": "a/b/c"} {
+		if got, err := uploadRel(in); err != nil || got != want {
+			t.Fatalf("%q: %q, %v", in, got, err)
+		}
+	}
+	if _, err := uploadRel("a/../../b"); err == nil {
+		t.Fatal("a folder that goes up was taken")
+	}
+}

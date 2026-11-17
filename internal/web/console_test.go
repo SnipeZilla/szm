@@ -265,3 +265,34 @@ func TestConsolePoll(t *testing.T) {
 		t.Fatalf("%+v", a)
 	}
 }
+
+// The page a status card's "Join via Steam" opens: for anyone (no session), an address only, nothing else in it.
+func TestJoinPage(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _ := config.Load(filepath.Join(dir, "szm.json"))
+	cat, _ := games.LoadOrBuiltin(t.TempDir())
+	s, err := New(manager.New(cfg, cat, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.routes())
+	defer ts.Close()
+	get := func(q string) (int, string) {
+		resp, err := http.Get(ts.URL + "/join" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	code, body := get("?a=203.0.113.7:27015")
+	if code != 200 || !strings.Contains(body, `href="steam://connect/203.0.113.7:27015"`) || !strings.Contains(body, `url=steam://connect/203.0.113.7:27015"`) {
+		t.Fatal(code, body)
+	}
+	for _, bad := range []string{"", "?a=", "?a=203.0.113.7", "?a=%22%3E%3Cscript%3Ealert(1)%3C/script%3E:1", "?a=x%20y:27015", "?a=evil.example/path:80"} {
+		if code, body := get(bad); code != 400 || strings.Contains(body, "<script") {
+			t.Errorf("%q: %d %s", bad, code, body)
+		}
+	}
+}

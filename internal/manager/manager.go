@@ -45,6 +45,8 @@ type Manager struct {
 
 	// RemoteServer describes a server of a linked machine, for the posts of its events (on a hub)
 	RemoteServer func(id string) *notify.Server
+	// RemoteCards gives the servers of the linked machines, for the status cards (on a hub)
+	RemoteCards func() []StatusCard
 	// GameIcon gives the PNG of a game's icon (built in, or <data>/icons/<icon>.png), for Discord
 	GameIcon func(icon string) []byte
 
@@ -83,6 +85,8 @@ type Manager struct {
 	conMu    sync.Mutex
 	conWatch map[string]struct{}
 	conWake  chan struct{}
+
+	board *board // the status cards in Discord (statusboard.go)
 }
 
 // New prepares a manager. Run starts it.
@@ -100,6 +104,7 @@ func New(cfg *config.Config, cat games.Catalog, dataDir string) *Manager {
 		lastCheck: map[string]time.Time{},
 		checkNow:  make(chan struct{}, 1),
 		conWake:   make(chan struct{}, 1),
+		board:     loadBoard(filepath.Join(dataDir, "status.json")),
 	}
 	m.Steam.Path = m.SteamCmdPath()
 	m.SetCatalog(cat)
@@ -151,6 +156,7 @@ func (m *Manager) Run(ctx context.Context) {
 	defer m.stopNetwork()
 	go m.forwardToDiscord(ctx)
 	go m.forwardToForum(ctx)
+	go m.statusBoard(ctx)
 	go m.updateChecker(ctx)
 	go m.addonChecker(ctx)
 	go m.sampleLoad(ctx)
@@ -733,6 +739,7 @@ func (m *Manager) queryServer(i *Instance, s config.Server, g *games.Game, mon c
 		i.mu.Unlock()
 		if first {
 			m.Log.Add(events.Start, s.ID, s.Name, "Up on %s, map %s", Address(s), info.Map)
+			go m.workshopSwitch(i, s.ID)
 		}
 		return
 	}

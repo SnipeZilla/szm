@@ -15,7 +15,7 @@ func TestWorkshopList(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if r.URL.Path == "/ISteamRemoteStorage/GetCollectionDetails/v1/" {
-			if r.PostForm.Get("publishedfileids[0]") == "900000" {
+			if id := r.PostForm.Get("publishedfileids[0]"); id == "900000" || id == "900001" {
 				w.Write([]byte(`{"response":{"collectiondetails":[{"result":1,"children":[{"publishedfileid":"111111","filetype":0},{"publishedfileid":"222222","filetype":0}]}]}}`))
 				return
 			}
@@ -70,6 +70,28 @@ func TestWorkshopList(t *testing.T) {
 	}
 	if _, err := m.SetWorkshopCollection("a", "111111", "me"); err == nil {
 		t.Fatal("a map taken as a collection")
+	}
+	// collections are kept, and one of them is played
+	if c, err := m.AddWorkshopCollection("a", "900001", "me"); err != nil || c.Maps != 2 || len(c.List) != 2 || c.List[1].Title != "Inferno" {
+		t.Fatal(c, err)
+	}
+	if _, err := m.AddWorkshopCollection("a", "111111", "me"); err == nil {
+		t.Fatal("a map kept as a collection")
+	}
+	if s := m.Cfg.Server("a"); len(s.WorkshopColls) != 2 || s.WorkshopColl != "900000" {
+		t.Fatalf("%+v", s)
+	}
+	if _, err := m.SetWorkshopCollection("a", "900001", "me"); err != nil || m.Cfg.Server("a").WorkshopColl != "900001" {
+		t.Fatal(err)
+	}
+	if err := m.RemoveWorkshopCollection("a", "900001", "me"); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.Cfg.Server("a"); len(s.WorkshopColls) != 1 || s.WorkshopColl != "" {
+		t.Fatalf("%+v", s)
+	}
+	if _, err := m.SetWorkshopCollection("a", "900000", "me"); err != nil {
+		t.Fatal(err)
 	}
 	_ = m.RemoveWorkshop("a", "222222", "me")
 	s := m.Cfg.Server("a")

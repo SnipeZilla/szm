@@ -54,3 +54,25 @@ func (s *Server) workshopCollection(w http.ResponseWriter, r *http.Request, u *U
 	}
 	return writeJSON(w, map[string]any{"ok": true, "title": title})
 }
+
+// workshopCollectionAdd keeps a collection for the server (what it plays does not change).
+func (s *Server) workshopCollectionAdd(w http.ResponseWriter, r *http.Request, u *User) error {
+	var in struct {
+		Input string `json:"input"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		return err
+	}
+	c, err := s.M.AddWorkshopCollection(r.PathValue("id"), strings.TrimSpace(in.Input), u.Name)
+	if err != nil {
+		return fail(http.StatusBadRequest, "%s.", strings.TrimSuffix(capitalize(err.Error()), "."))
+	}
+	return writeJSON(w, c)
+}
+
+func (s *Server) workshopCollectionRemove(w http.ResponseWriter, r *http.Request, u *User) error {
+	if err := s.M.RemoveWorkshopCollection(r.PathValue("id"), r.PathValue("cid"), u.Name); err != nil {
+		return fail(http.StatusBadRequest, "%s.", capitalize(err.Error()))
+	}
+	return writeJSON(w, map[string]any{"ok": true})
+}

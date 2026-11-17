@@ -41,7 +41,7 @@ import (
 // szm.ico), run "go generate ./cmd/szm" to write rsrc_windows_amd64.syso again.
 //
 //go:generate go run ../../tools/mkres
-var version = "2.0.3"
+var version = "2.0.4"
 
 const serviceName = "SnipeZillaServerManager"
 

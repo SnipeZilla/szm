@@ -2126,12 +2126,19 @@ function fileBrowser(base, key, rootLabel, opts) {
   const selBar = h('div');
   const logsNote = h('div');
   const fileInput = h('input', { type: 'file', multiple: true, class: 'hidden', onchange: () => { uploadFiles([...fileInput.files]); fileInput.value = ''; } });
+  const dirInput = h('input', { type: 'file', class: 'hidden', onchange: () => { uploadFiles([...dirInput.files]); dirInput.value = ''; } });
+  dirInput.webkitdirectory = true;
   const join = (a, b) => (a ? a + '/' : '') + b;
   const sortKey = () => 'fsort' + (isLogs ? '.logs' : '');
 
+  let loadSeq = 0; // the folder asked for last is the one shown, whatever order the answers come in
   async function load(p) {
+    const seq = ++loadSeq;
+    waiting(1);
+    zone.classList.add('loading');
     try {
       const r = await api('GET', base + '/files?path=' + encodeURIComponent(p));
+      if (seq !== loadSeq) return;
       const moved = r.path !== path;
       if (moved) picked.clear();
       path = r.path;
@@ -2148,8 +2155,12 @@ function fileBrowser(base, key, rootLabel, opts) {
       // another folder: its top in view (the same one, refreshed: the page stays)
       if (moved && zone.getBoundingClientRect().top < 70) window.scrollTo(0, Math.max(0, window.scrollY + zone.getBoundingClientRect().top - 140));
     } catch (e) {
+      if (seq !== loadSeq) return;
       if (p) { path = ''; load(''); return; }
       swap(tbody, h('tr', null, h('td', { colspan: '5' }, h('div', { class: 'empty' }, icon('folder'), h('p', null, e.message)))));
+    } finally {
+      waiting(-1);
+      if (seq === loadSeq) zone.classList.remove('loading');
     }
   }
 
@@ -2205,7 +2216,13 @@ function fileBrowser(base, key, rootLabel, opts) {
     if (path) rows.push(h('tr', null, h('td', { class: 'pick' }), h('td', { class: 'name', onclick: () => load(path.split('/').slice(0, -1).join('/')) }, h('div', null, icon('up', 'd'), '..')), h('td'), h('td', { class: 'hide-m' }), h('td')));
     for (const e of sorted()) {
       const full = join(path, e.name);
-      const open = () => e.dir ? load(full) : e.text ? openEditor(id, full) : download(full);
+      // the row says at once that it was clicked, and takes no second click until it is open
+      const open = async ev => {
+        const tr = ev.currentTarget.closest('tr');
+        if (tr.classList.contains('opening')) return;
+        tr.classList.add('opening');
+        try { await (e.dir ? load(full) : e.text ? openEditor(id, full) : download(full)); } finally { tr.classList.remove('opening'); }
+      };
       rows.push(h('tr', { class: picked.has(e.name) ? 'picked' : '' },
         h('td', { class: 'pick' }, h('input', { type: 'checkbox', checked: picked.has(e.name), 'aria-label': 'Select ' + e.name,
           onchange: ev => { ev.target.checked ? picked.add(e.name) : picked.delete(e.name); render(); } })),
@@ -2220,7 +2237,7 @@ function fileBrowser(base, key, rootLabel, opts) {
           h('button', { class: 'btn sm ghost icon', title: 'Rename', 'aria-label': 'Rename ' + e.name, onclick: () => renameEntry(e) }, icon('wrench')),
           h('button', { class: 'btn sm ghost icon', title: 'Delete', 'aria-label': 'Delete ' + e.name, onclick: () => deleteEntry(e) }, icon('trash')))));
     }
-    if (!entries.length) rows.push(h('tr', null, h('td', { colspan: '5', class: 'muted', style: 'text-align:center;padding:30px' }, 'Empty folder. Drop files here to upload them.')));
+    if (!entries.length) rows.push(h('tr', null, h('td', { colspan: '5', class: 'muted', style: 'text-align:center;padding:30px' }, 'Empty folder. Drop files or folders here to upload them.')));
     // the page stays where it is (the list rebuilt would bring it up), and the box just ticked keeps the focus
     const y = window.scrollY;
     const focused = document.activeElement && zone.contains(document.activeElement) ? document.activeElement.getAttribute('aria-label') : null;
@@ -2386,13 +2403,16 @@ function fileBrowser(base, key, rootLabel, opts) {
     if (await run(() => api('PUT', base + '/file', { path: join(path, name), content: '', crlf: true }))) { load(path); openEditor(id, join(path, name)); }
   }
 
+  // uploadFiles: files (as picked), or files with the folder they go in under this one (rel: a folder dropped or
+  // picked keeps its tree)
   function uploadFiles(files) {
-    if (!files.length) return;
+    const items = files.map(f => f.file ? f : { file: f, rel: (f.webkitRelativePath || '').split('/').slice(0, -1).join('/') });
+    if (!items.length) return;
     const fd = new FormData();
     let total = 0;
-    for (const f of files) { fd.append('file', f, f.name); total += f.size; }
+    for (const it of items) { fd.append('rel', it.rel || ''); fd.append('file', it.file, it.file.name); total += it.file.size; }
     const bar = h('i', { style: 'width:0%' });
-    const label = h('span', { class: 'grow ellipsis' }, `Uploading ${files.length} file${files.length > 1 ? 's' : ''} (${fmtBytes(total)})…`);
+    const label = h('span', { class: 'grow ellipsis' }, `Uploading ${items.length} file${items.length > 1 ? 's' : ''} (${fmtBytes(total)})…`);
     swap(upl, h('div', { class: 'panel', style: 'padding:10px 14px;margin-bottom:12px' }, h('div', { class: 'row small', style: 'margin-bottom:6px' }, label), h('div', { class: 'bar' }, bar)));
     const xhr = new XMLHttpRequest();
     xhr.open('POST', machineURL(base + '/upload?path=' + encodeURIComponent(path)));
@@ -2402,10 +2422,30 @@ function fileBrowser(base, key, rootLabel, opts) {
       clear(upl);
       let d = {};
       try { d = JSON.parse(xhr.responseText); } catch (e) { /* */ }
-      if (xhr.status === 200) { toast(`Uploaded ${d.files ? d.files.length : files.length} file(s).`, 'ok'); load(path); } else toast(d.error || 'Upload failed.', 'bad');
+      if (xhr.status === 200) { toast(`Uploaded ${d.files ? d.files.length : items.length} file(s).`, 'ok'); load(path); } else toast(d.error || 'Upload failed.', 'bad');
     };
     xhr.onerror = () => { clear(upl); toast('Upload failed.', 'bad'); };
     xhr.send(fd);
+  }
+
+  // dropped: what was dropped, folders walked through: each file with the folder it goes in. The entries are
+  // taken while the drop is handled (they are gone after).
+  function dropped(dt) {
+    const plain = [...dt.files];
+    const roots = [...(dt.items || [])].filter(i => i.kind === 'file' && i.webkitGetAsEntry).map(i => i.webkitGetAsEntry()).filter(Boolean);
+    if (!roots.some(en => en.isDirectory)) return Promise.resolve(plain);
+    const out = [];
+    const walk = (en, rel) => new Promise((resolve, reject) => {
+      if (en.isFile) { en.file(f => { out.push({ file: f, rel }); resolve(); }, reject); return; }
+      const reader = en.createReader();
+      const sub = (rel ? rel + '/' : '') + en.name;
+      const more = () => reader.readEntries(async list => { // given by batches: until none is left
+        if (!list.length) { resolve(); return; }
+        try { for (const c of list) await walk(c, sub); more(); } catch (e) { reject(e); }
+      }, reject);
+      more();
+    });
+    return roots.reduce((p, en) => p.then(() => walk(en, '')), Promise.resolve()).then(() => out);
   }
 
   const table = h('table', { class: 'list files' }, thead, tbody);
@@ -2414,7 +2454,10 @@ function fileBrowser(base, key, rootLabel, opts) {
   zone.addEventListener('dragenter', e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); depth++; zone.classList.add('over'); } });
   zone.addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
   zone.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) zone.classList.remove('over'); });
-  zone.addEventListener('drop', e => { e.preventDefault(); depth = 0; zone.classList.remove('over'); uploadFiles([...e.dataTransfer.files]); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; zone.classList.remove('over');
+    dropped(e.dataTransfer).then(list => { if (list.length) uploadFiles(list); else toast('Nothing to upload: the folder is empty.', 'bad'); }, () => toast('This folder could not be read.', 'bad'));
+  });
 
   load(path);
   // the path fitted again when its room changes (the window, the other pane)
@@ -2430,7 +2473,8 @@ function fileBrowser(base, key, rootLabel, opts) {
       tbtn('', 'refresh', 'Refresh', () => load(path)),
       tbtn('', 'folderplus', 'Folder', newFolder, 'New folder'),
       tbtn('', 'fileplus', 'File', newFile, 'New file'),
-      tbtn(' primary', 'upload', 'Upload', () => fileInput.click(), 'Upload files (or drop them on the list)'), fileInput),
+      tbtn('', 'folder', 'Upload folder', () => dirInput.click(), 'Upload a folder, with all it holds (or drop it on the list)'), dirInput,
+      tbtn(' primary', 'upload', 'Upload', () => fileInput.click(), 'Upload files (or drop them, or folders, on the list)'), fileInput),
     logsNote, upl, clipBar, selBar, zone, h('div', { style: 'margin-top:8px' }, info));
   document.addEventListener('keydown', onKey);
   window.addEventListener('szmclip', renderClip);
@@ -2447,15 +2491,31 @@ function fileBrowser(base, key, rootLabel, opts) {
   };
 }
 
+// waiting: the pointer says the page is busy (a file or a folder being read) from the click on, so a slow answer
+// is not taken for a click that was missed
+let WAITING = 0;
+function waiting(n) {
+  WAITING = Math.max(0, WAITING + n);
+  document.documentElement.classList.toggle('waiting', WAITING > 0);
+}
+
+// The files being opened, or open in the editor: a second click on one opens nothing more
+const EDITORS = new Set();
 async function openEditor(base, path, onSaved) {
+  const key = base + '\n' + path;
+  if (EDITORS.has(key)) return;
+  EDITORS.add(key);
   let file;
-  try { file = await api('GET', base + '/file?path=' + encodeURIComponent(path)); } catch (e) { toast(e.message, 'bad'); return; }
+  waiting(1);
+  const slow = setTimeout(() => toast('Opening ' + path.split('/').pop() + '…'), 600); // said only when it takes time
+  try { file = await api('GET', base + '/file?path=' + encodeURIComponent(path)); } catch (e) { EDITORS.delete(key); toast(e.message, 'bad'); return; } finally { clearTimeout(slow); waiting(-1); }
   let dirty = false;
   const ta = h('textarea', { spellcheck: false, value: file.content, 'aria-label': path });
   const state = h('span', { class: 'muted small' }, file.crlf ? 'Windows line ends' : 'Unix line ends');
   const saveBtn = h('button', { class: 'btn primary sm' }, icon('save'), 'Save');
   const m = modal({
     title: h('span', { class: 'mono', style: 'font-size:14px' }, path), size: 'full', buttons: false, locked: true,
+    onClose: () => EDITORS.delete(key),
   });
   // Closing with changes asks first
   const close = m.close;
@@ -2631,9 +2691,13 @@ function tabMaps(id) {
 
   // CS2 Workshop: maps added by ID or address (or a whole collection), played now, started on; a collection played
   const wsPanel = h('div', { class: 'panel', style: 'margin-top:16px' });
-  const wsInput = h('input', { type: 'text', placeholder: 'Workshop map or collection: ID or address', spellcheck: false });
+  const wsInput = h('input', { type: 'text', placeholder: 'Workshop map: ID or address', spellcheck: false });
   const wsSearch = h('input', { type: 'search', placeholder: 'Search…', style: 'height:32px;max-width:220px' });
   const wsGrid = h('div', { class: 'wsgrid' });
+  const wsColls = h('div', { class: 'col', style: 'gap:10px' });
+  const wsFolded = new Set(); // the collections whose maps are hidden
+  const wsTried = new Set(); // ... whose maps were asked for (once)
+  const wsFilled = new Set(); // ... and answered, or not
   wsSearch.addEventListener('input', () => drawWsGrid());
   async function addWorkshop(e) {
     e.preventDefault();
@@ -2654,51 +2718,104 @@ function tabMaps(id) {
     if (n > 0 && !await confirmBox('Change map to ' + w.title + '?', `${n} player${n > 1 ? 's are' : ' is'} on the server: the map changes now. The first time, the server downloads it first (${fmtBytes(w.size || 0)}).`, 'Change map')) return;
     if (await run(() => api('POST', base + '/rcon', { command: 'host_workshop_map ' + w.id }), 'Loading ' + w.title + '…')) setTimeout(load, 6000);
   }
-  function drawWsGrid() {
-    const list = data.workshop || [];
+  // A Workshop map: played now, or the one the server changes to at each start. own: of the server's own list
+  // (removed there); a map of a collection belongs to it.
+  function wsCard(w, own) {
+    const isStart = data.workshop_map === w.id;
+    return h('div', { class: 'wscard' + (isStart ? ' start' : '') },
+      h('a', { class: 'wsimg', href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + w.id, target: '_blank', rel: 'noopener', title: 'On the Steam Workshop' },
+        w.preview ? h('img', { src: w.preview, alt: '', loading: 'lazy' }) : icon('map')),
+      h('div', { class: 'wsbody' },
+        h('div', { class: 'wstitle', title: w.title }, w.title),
+        h('div', { class: 'muted small mono' }, w.id + (w.size ? ' · ' + fmtBytes(w.size) : '')),
+        isStart ? h('span', { class: 'tag blue', style: 'margin-top:4px', title: 'The server starts on its usual map, then changes to this one once it is up' }, 'starts on it') : null),
+      h('div', { class: 'wsacts' },
+        canChange() ? h('button', { class: 'btn sm', title: 'Play it now (host_workshop_map)', onclick: () => playWorkshop(w) }, icon('play'), 'Play') : null,
+        can('f') ? h('button', { class: 'btn sm ghost', title: isStart ? 'Stay on its usual map again' : 'Change to this map each time the server starts: it starts on its usual map, then changes to this one once it is up',
+          onclick: async () => { if (await run(() => api('PUT', base + '/workshop/start', { id: isStart ? '' : w.id }), isStart ? 'It stays on ' + (serverBy(id).map || 'its map') + ' again.' : 'From its next start: it starts on ' + (serverBy(id).map || 'its map') + ', then changes to ' + w.title + ' once it is up.')) load(); } },
+          icon(isStart ? 'x' : 'power'), isStart ? 'Usual start' : 'Start on it') : null,
+        own && can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Remove from the list', 'aria-label': 'Remove ' + w.title,
+          onclick: async () => { if (await run(() => api('DELETE', base + '/workshop/' + w.id), w.title + ' removed.')) load(); } }, icon('trash')) : null));
+  }
+  const wsShown = list => {
     const q = wsSearch.value.toLowerCase();
-    const shown = list.filter(w => !q || w.title.toLowerCase().includes(q) || w.id.includes(q));
-    if (!list.length) { swap(wsGrid, h('div', { class: 'muted small', style: 'padding:6px 2px' }, 'No Workshop map yet. Paste one above: its ID, or its address on the Steam Workshop.')); return; }
-    swap(wsGrid, shown.map(w => {
-      const isStart = data.workshop_map === w.id;
-      return h('div', { class: 'wscard' + (isStart ? ' start' : '') },
-        h('a', { class: 'wsimg', href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + w.id, target: '_blank', rel: 'noopener', title: 'On the Steam Workshop' },
-          w.preview ? h('img', { src: w.preview, alt: '', loading: 'lazy' }) : icon('map')),
-        h('div', { class: 'wsbody' },
-          h('div', { class: 'wstitle', title: w.title }, w.title),
-          h('div', { class: 'muted small mono' }, w.id + (w.size ? ' · ' + fmtBytes(w.size) : '')),
-          isStart ? h('span', { class: 'tag blue', style: 'margin-top:4px' }, 'starts on it') : null),
-        h('div', { class: 'wsacts' },
-          canChange() ? h('button', { class: 'btn sm', title: 'Play it now (host_workshop_map)', onclick: () => playWorkshop(w) }, icon('play'), 'Play') : null,
-          can('f') ? h('button', { class: 'btn sm ghost', title: isStart ? 'Start on its usual map again' : 'Start on this map (from the next start)',
-            onclick: async () => { if (await run(() => api('PUT', base + '/workshop/start', { id: isStart ? '' : w.id }), isStart ? 'It starts on ' + (serverBy(id).map || 'its map') + ' again.' : 'It starts on ' + w.title + ' from its next start.')) load(); } },
-            icon(isStart ? 'x' : 'power'), isStart ? 'Usual start' : 'Start on it') : null,
-          can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Remove from the list', 'aria-label': 'Remove ' + w.title,
-            onclick: async () => { if (await run(() => api('DELETE', base + '/workshop/' + w.id), w.title + ' removed.')) load(); } }, icon('trash')) : null));
-    }));
+    return (list || []).filter(w => !q || (w.title || '').toLowerCase().includes(q) || w.id.includes(q));
+  };
+  // The maps, by where they come from: under each collection its own (what the server plays with it, a map of two
+  // collections under both), then the maps added one by one
+  function drawWsGrid() {
+    swap(wsColls, (data.workshop_collections || []).map(collGroup));
+    const list = data.workshop || [];
+    swap(wsGrid, list.length ? wsShown(list).map(w => wsCard(w, true))
+      : h('div', { class: 'muted small', style: 'padding:6px 2px' }, 'None yet. Paste a map above: its ID, or its address on the Steam Workshop.'));
+  }
+  // A collection kept for the server (one for each season, say), with its maps under it: one of them is the one
+  // it plays
+  function collGroup(c) {
+    const played = data.workshop_collection === c.id;
+    const name = c.title || c.id;
+    const folded = wsFolded.has(c.id);
+    const n = c.list ? c.list.length : c.maps || 0;
+    return h('div', { class: 'wsgroup' + (played ? ' played' : '') },
+      h('div', { class: 'wscollrow' },
+        h('button', { class: 'btn sm ghost icon wsfold' + (folded ? '' : ' open'), type: 'button', title: folded ? 'Show its maps' : 'Hide its maps', 'aria-label': (folded ? 'Show the maps of ' : 'Hide the maps of ') + name,
+          onclick: () => { if (folded) wsFolded.delete(c.id); else wsFolded.add(c.id); drawWsGrid(); } }, icon('chevron')),
+        h('div', { class: 'grow', style: 'min-width:0' },
+          h('a', { href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + c.id, target: '_blank', rel: 'noopener', title: 'On the Steam Workshop' }, h('b', null, name)),
+          h('span', { class: 'muted small mono' }, ' ' + c.id + (n ? ' · ' + n + ' map' + (n > 1 ? 's' : '') : ''))),
+        played ? h('span', { class: 'tag blue', title: 'The server plays these maps (from its next start, if it was just picked)' }, 'played') : null,
+        can('f') ? (played
+          ? h('button', { class: 'btn sm ghost', title: 'Play no collection (from the next start)',
+            onclick: async () => { if (await run(() => api('PUT', base + '/workshop/collection', { input: '' }), 'No collection from the next start.')) load(); } }, icon('x'), 'Stop using it')
+          : h('button', { class: 'btn sm', title: 'Play this collection (from the next start)',
+            onclick: async () => { if (await run(() => api('PUT', base + '/workshop/collection', { input: c.id }), name + ': played from the next start.')) load(); } }, icon('power'), 'Use')) : null,
+        can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Read it again from Steam: its name and its maps', 'aria-label': 'Refresh ' + name,
+          onclick: async () => { if (await run(() => api('POST', base + '/workshop/collections', { input: c.id }), name + ' read again from Steam.')) load(); } }, icon('restart')) : null,
+        can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Remove from the collections', 'aria-label': 'Remove ' + name,
+          onclick: async () => { if (await run(() => api('DELETE', base + '/workshop/collections/' + c.id), name + ' removed' + (played ? ': no collection from the next start.' : '.'))) load(); } }, icon('trash')) : null),
+      folded ? null
+        : !c.list ? h('div', { class: 'muted small' }, !can('j') ? 'Its maps are not known yet.' : wsFilled.has(c.id) ? 'Steam gave no map for it: its Refresh button reads it again.' : 'Reading its maps from Steam…')
+          : h('div', { class: 'wsgrid' }, wsShown(c.list).map(w => wsCard(w, false))));
+  }
+  // A collection kept before its maps were (or that Steam did not give): read again, once
+  async function fillCollections() {
+    const todo = (data.workshop_collections || []).filter(c => !c.list && !wsTried.has(c.id));
+    if (!todo.length || !can('j')) return;
+    todo.forEach(c => wsTried.add(c.id));
+    let got = false;
+    for (const c of todo) {
+      try { await api('POST', base + '/workshop/collections', { input: c.id }); got = true; } catch (e) { /* Steam does not answer: its Refresh button */ }
+      wsFilled.add(c.id);
+    }
+    if (got) load(); else drawWsGrid();
   }
   function renderWorkshop() {
-    const coll = data.workshop_collection;
+    const colls = data.workshop_collections || [];
+    const total = (data.workshop || []).length + colls.reduce((n, c) => n + (c.list || []).length, 0);
     const collInput = h('input', { type: 'text', placeholder: 'Collection ID or address', spellcheck: false });
     swap(wsPanel,
       h('div', { class: 'hd' }, icon('globe'), h('div', { class: 'grow' }, h('h2', null, 'Workshop maps'),
-        h('div', { class: 'muted small' }, 'Paste a map or a collection (a collection adds all its maps). CS2 downloads a map itself the first time it plays it.')),
-        (data.workshop || []).length > 6 ? wsSearch : null),
+        h('div', { class: 'muted small' }, 'CS2 downloads a map itself the first time it plays it.')),
+        total > 6 ? wsSearch : null),
       h('div', { class: 'bd col', style: 'gap:14px' },
-        can('j') ? h('form', { class: 'inputgroup', onsubmit: addWorkshop }, wsInput, h('button', { class: 'btn primary', type: 'submit' }, icon('plus'), 'Add')) : null,
         h('div', { class: 'wscoll' },
-          h('div', { class: 'grow' }, h('b', null, 'Collection played: '), coll ? h('span', null, h('a', { href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + coll, target: '_blank', rel: 'noopener' }, data.workshop_collection_title || coll)) : h('span', { class: 'muted' }, 'none'),
-            h('div', { class: 'muted small' }, 'The server downloads the collection and plays its maps (+host_workshop_collection), from its next start.')),
-          can('f') ? (coll
-            ? h('button', { class: 'btn sm ghost', onclick: async () => { if (await run(() => api('PUT', base + '/workshop/collection', { input: '' }), 'No collection from the next start.')) load(); } }, icon('x'), 'Stop using it')
-            : h('form', { class: 'inputgroup', style: 'max-width:420px', onsubmit: async e => {
-              e.preventDefault();
-              if (!collInput.value.trim()) return;
-              const r = await run(() => api('PUT', base + '/workshop/collection', { input: collInput.value.trim() }), 'Collection set: from the next start.');
-              if (r) load();
-            } }, collInput, h('button', { class: 'btn', type: 'submit' }, 'Use'))) : null),
-        wsGrid));
+          h('div', { class: 'grow' }, h('b', null, 'Collections'),
+            h('div', { class: 'muted small' }, 'Keep several (one for each season, say) and pick the one the server plays: it downloads it and plays its maps (+host_workshop_collection), from its next start. Each shows its own maps.')),
+          can('j') ? h('form', { class: 'inputgroup', style: 'max-width:420px', onsubmit: async e => {
+            e.preventDefault();
+            if (!collInput.value.trim()) return;
+            const r = await run(() => api('POST', base + '/workshop/collections', { input: collInput.value.trim() }), 'Collection kept: Use makes it the one played.');
+            if (r) load();
+          } }, collInput, h('button', { class: 'btn', type: 'submit' }, icon('plus'), 'Keep')) : null),
+        colls.length ? wsColls : h('div', { class: 'muted small' }, 'No collection yet: the server plays its map group.'),
+        h('div', { class: 'wsgroup' },
+          h('div', { class: 'wscollrow' },
+            h('div', { class: 'grow' }, h('b', null, 'Maps added one by one'),
+              h('div', { class: 'muted small' }, 'Not of a collection: played with Play, or the map it changes to at each start. Pasting a collection here adds all its maps.')),
+            can('j') ? h('form', { class: 'inputgroup', style: 'max-width:420px', onsubmit: addWorkshop }, wsInput, h('button', { class: 'btn primary', type: 'submit' }, icon('plus'), 'Add')) : null),
+          wsGrid)));
     drawWsGrid();
+    fillCollections();
   }
 
   const el = h('div', null, h('div', { class: 'grid2 even' },
@@ -2861,27 +2978,65 @@ function steamFacts(st) {
   return out;
 }
 
-// cs2ModePicker: CS2's game mode, as the +game_type and +game_mode launch options say it
-const CS2_MODES = [['0 0', 'Casual'], ['0 1', 'Competitive'], ['0 2', 'Wingman'], ['1 2', 'Deathmatch'], ['1 0', 'Arms Race']];
+// The launch options of a server (f.args), read and set one option at a time: the pickers of a CS2 server (its game
+// mode, its map group) keep them there, where the command line takes them from
+function argGet(args, key) {
+  const tok = (args || '').split(/\s+/).filter(Boolean);
+  const i = tok.findIndex(t => t.toLowerCase() === key);
+  return i >= 0 && i + 1 < tok.length && !/^[+-][A-Za-z_]/.test(tok[i + 1]) ? tok[i + 1] : null;
+}
+// argSet: the launch options with an option set (changed where it is, added at the end otherwise), or taken out
+// (value null). The others stay as they are.
+function argSet(args, key, value) {
+  const tok = (args || '').split(/\s+/).filter(Boolean);
+  const out = [];
+  let done = false;
+  for (let i = 0; i < tok.length; i++) {
+    if (tok[i].toLowerCase() !== key) { out.push(tok[i]); continue; }
+    if (i + 1 < tok.length && !/^[+-][A-Za-z_]/.test(tok[i + 1])) i++;
+    if (value != null && !done) { out.push(key, value); done = true; }
+  }
+  if (value != null && !done) out.push(key, value);
+  return out.join(' ');
+}
+
+// cs2ModePicker: CS2's game mode, as the +game_type and +game_mode launch options say it. refresh() reads them
+// again (the launch options were typed in).
+const CS2_MODES = [['0 0', 'Casual'], ['0 1', 'Competitive'], ['0 2', 'Wingman'], ['1 2', 'Deathmatch'], ['1 0', 'Arms Race'], ['3 0', 'Custom']];
 function cs2ModePicker(f, onChange) {
-  const tok = (f.args || '').split(/\s+/).filter(Boolean);
-  const val = k => { const i = tok.indexOf(k); return i >= 0 && i + 1 < tok.length ? tok[i + 1] : null; };
-  const cur = (val('+game_type') || '0') + ' ' + (val('+game_mode') || '0');
-  const known = CS2_MODES.some(m => m[0] === cur);
-  const sel = h('select', null, CS2_MODES.map(([v, l]) => h('option', { value: v, selected: v === cur }, l)),
-    known ? null : h('option', { value: cur, selected: true }, 'Other (' + cur + ', from the launch options)'));
+  const sel = h('select');
+  sel.refresh = () => {
+    const cur = (argGet(f.args, '+game_type') || '0') + ' ' + (argGet(f.args, '+game_mode') || '0');
+    const [t, m] = cur.split(' ');
+    swap(sel, CS2_MODES.map(([v, l]) => h('option', { value: v, selected: v === cur }, l)),
+      CS2_MODES.some(x => x[0] === cur) ? null : h('option', { value: cur, selected: true }, 'Other (game_type ' + t + ', game_mode ' + m + ': from the launch options)'));
+    sel.value = cur;
+  };
   sel.addEventListener('change', () => {
     const [t, m] = sel.value.split(' ');
-    const out = [];
-    for (let i = 0; i < tok.length; i++) {
-      if (tok[i] === '+game_type' || tok[i] === '+game_mode') { i++; continue; }
-      out.push(tok[i]);
-    }
-    out.push('+game_type', t, '+game_mode', m);
-    tok.splice(0, tok.length, ...out);
-    f.args = out.join(' ');
+    f.args = argSet(argSet(f.args, '+game_type', t), '+game_mode', m);
     onChange();
   });
+  sel.refresh();
+  return sel;
+}
+
+// cs2GroupPicker: the map group a CS2 server plays (+mapgroup in its launch options), among those of its
+// gamemodes_server.txt (made on its Maps tab). None: the group of its game mode.
+function cs2GroupPicker(f, onChange) {
+  let names = [];
+  const sel = h('select');
+  sel.refresh = () => {
+    const cur = argGet(f.args, '+mapgroup') || '';
+    const all = names.slice();
+    if (cur && !all.some(n => n.toLowerCase() === cur.toLowerCase())) all.push(cur);
+    swap(sel, h('option', { value: '', selected: !cur }, 'None (the one of its game mode)'),
+      all.map(n => h('option', { value: n, selected: n.toLowerCase() === cur.toLowerCase() }, n)));
+    sel.value = all.find(n => n.toLowerCase() === cur.toLowerCase()) || '';
+  };
+  sel.addEventListener('change', () => { f.args = argSet(f.args, '+mapgroup', sel.value || null); onChange(); });
+  sel.refresh();
+  if (f.id) api('GET', 'api/servers/' + encodeURIComponent(f.id) + '/maps').then(r => { names = r.map_groups || []; sel.refresh(); }).catch(() => {});
   return sel;
 }
 
@@ -2987,6 +3142,15 @@ function serverForm(f, g, isNew, onChange) {
   showTime();
   const goldsrc = g.engine === 'goldsrc';
   const other = g.engine === 'other'; // Rust, 7 Days to Die…: their command line says it all
+  // CS2: its game mode and its map group are picked, and kept in its launch options (typed there, the pickers follow)
+  const cs2 = g.key === 'cs2';
+  const argsBox = h('textarea', {
+    rows: 3, spellcheck: false, value: f.args || '', placeholder: other ? '' : '+sv_lan 0',
+    oninput: e => { f.args = e.target.value; if (cs2) { cs2Mode.refresh(); cs2Group.refresh(); } if (onChange) onChange(); },
+  });
+  const picked = () => { argsBox.value = f.args || ''; if (onChange) onChange(); };
+  const cs2Mode = cs2 ? cs2ModePicker(f, picked) : null;
+  const cs2Group = cs2 ? cs2GroupPicker(f, picked) : null;
 
   return h('div', null,
     h('div', { class: 'section' }, h('h3', null, 'Server'), h('div', { class: 'hint' }, 'How it shows in the manager, and where it lives.'),
@@ -3007,6 +3171,8 @@ function serverForm(f, g, isNew, onChange) {
         field('Max players', bindText(f, 'maxplayers', { type: 'number', min: 1, max: 255 })),
         other ? (g.map ? field('Map or world', bindText(f, 'map', { placeholder: g.default_map }), 'The map, or the world, it plays (' + g.default_map + ' unless you give another).') : null)
           : field('Map', mapPicker(f, g, isNew), isNew ? 'The first map. ' + g.name + ' starts on ' + g.default_map + ' unless you pick another; the Maps tab lists them once it is installed.' : 'The map it starts on.'),
+        cs2 ? field('Game mode', cs2Mode, 'Its +game_type and +game_mode, in the launch options below.') : null,
+        cs2 && !isNew ? field('Map group', cs2Group, 'The maps it rotates (+mapgroup, in the launch options below). A new group is made on the Maps tab.') : null,
         other && g.password ? field('Join password', h('div', { class: 'inputgroup' }, ...secret(f, 'password')), 'What players type to join. Empty: none.') : null,
         goldsrc || (other && !g.gslt) ? null : field('Game server login token', h('div', { class: 'inputgroup' }, gslt[0], gslt[1]),
           h('span', null, 'Needed for players outside your LAN to find the server. Get one at ', h('a', { href: 'https://steamcommunity.com/dev/managegameservers', target: '_blank', rel: 'noopener' }, 'steamcommunity.com/dev/managegameservers'), ' (app ID ' + (g.key === 'cs2' ? '730' : 'of the game') + ').'), true),
@@ -3014,10 +3180,7 @@ function serverForm(f, g, isNew, onChange) {
         other ? null : field('Say command', bindText(f, 'say_command', { placeholder: 'say' }), 'How players are warned: say, sm_csay, hlx_sm_csay…'))),
     h('div', { class: 'section' }, h('h3', null, 'Launch options'), h('div', { class: 'hint' }, other ? 'More options for the command line, after the game\'s own (these games take the last of an option given twice).' : 'More options for the command line. One you give replaces the default one of the same name (for example +maxplayers).'),
       h('div', { class: 'formgrid' },
-        field('Options', h('textarea', {
-          rows: 3, spellcheck: false, value: f.args || '', placeholder: other ? '' : '+sv_lan 0',
-          oninput: e => { f.args = e.target.value; if (onChange) onChange(); },
-        }), null, true),
+        field('Options', argsBox, null, true),
         field('Priority', bindSelect(f, 'priority', [['', 'Manager default']].concat(PRIORITIES.map(p => [p, p[0].toUpperCase() + p.slice(1)])))),
         other ? (g.log ? h('div', { class: 'wide' }, bindCheck(f, 'console_log', 'Show the console here', 'Its console log, which the Console tab reads live. Recommended.')) : null)
           : h('div', { class: 'wide' }, bindCheck(f, 'console_log', 'Show the console here (-condebug)', 'The server always runs with -console (its text console, in its own window). -condebug also copies everything that console prints into console.log, which the Console tab reads live. Recommended.')))),
@@ -4526,6 +4689,24 @@ function pageSettings(start) {
       list.splice(k, 1); redraw(); changed();
     } }, icon('trash'), 'Remove');
     const discordList = h('div', { class: 'col', style: 'gap:12px' });
+    // how the status cards of each channel are doing (as saved: by its webhook)
+    const cardsBy = {};
+    st.discords.forEach((d, k) => { if (d.webhook && r.cards && r.cards[k]) cardsBy[d.webhook] = r.cards[k]; });
+    // the manager's own page that opens Steam on a server, as players reach this manager
+    const ownJoin = location.origin + location.pathname.replace(/[^/]*$/, '') + 'join?a={address}';
+    // Live status: the channel also shows its servers, a message each, kept up to date
+    function liveStatus(d) {
+      const cs = cardsBy[d.webhook] || {};
+      const join = bindText(d, 'join', { placeholder: 'https://your-site/join?a={address}', spellcheck: false });
+      return h('div', { class: 'wide col', style: 'gap:10px' },
+        bindCheck(d, 'status', 'Live status',
+          'One message per server in this channel, kept up to date by itself: online or not, map, players, address and the players of the last 24 hours. For the servers chosen above. Best in a channel of its own, where only the manager posts.', drawDiscords),
+        d.status ? field('Join link (optional)', h('div', { class: 'inputgroup' }, join,
+          h('button', { class: 'btn', type: 'button', title: ownJoin, onclick: () => { d.join = ownJoin; drawDiscords(); changed(); } }, icon('globe'), 'This manager\'s')),
+          'Adds "Join via Steam" to the cards of the Steam games. Discord opens web links only: this is a web page that opens Steam on the server, with {address} where its ip:port goes. This manager has one (the button), if players can reach its address on the internet; else a page of your site.', true) : null,
+        d.status && cs.error ? h('div', { class: 'note bad small' }, icon('alert'), ' The cards could not be posted: ' + cs.error + ' It is tried again every minute.') : null,
+        d.status && !cs.error && cs.cards ? h('div', { class: 'muted small' }, cs.cards + (cs.cards === 1 ? ' card' : ' cards') + ' in the channel' + (cs.at ? ', last changed ' + timeAgo(cs.at) + '.' : '.')) : null);
+    }
     function drawDiscords() {
       swap(discordList, st.discords.length ? st.discords.map((d, k) => {
         const hook = secret(d, 'webhook', { placeholder: 'https://discord.com/api/webhooks/…' });
@@ -4536,7 +4717,7 @@ function pageSettings(start) {
             field('Webhook URL', h('div', { class: 'inputgroup' }, hook[0], hook[1],
               h('button', { class: 'btn', type: 'button', onclick: () => run(() => api('POST', 'api/discord/test', { webhook: d.webhook, username: d.username, name: d.name }), 'Test message sent to ' + (d.name || 'Discord') + '.') }, icon('chat'), 'Test')), null, true),
             field('Name of the poster', bindText(d, 'username', { placeholder: 'The webhook\'s own name' })),
-            pickers(d)));
+            pickers(d), liveStatus(d)));
       }) : h('div', { class: 'muted small' }, 'No channel yet.'));
     }
     drawDiscords();

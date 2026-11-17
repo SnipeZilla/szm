@@ -144,6 +144,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /games/{file}", s.serveIcon)
 
 	// Without a session
+	mux.HandleFunc("GET /join", s.joinPage) // what the status cards' "Join via Steam" can open
 	mux.HandleFunc("GET /api/hello", s.hello)
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/setup", s.setup)
@@ -168,6 +169,8 @@ func (s *Server) routes() http.Handler {
 	api("DELETE /api/servers/{id}/workshop/{wid}", "j", s.workshopRemove)
 	api("PUT /api/servers/{id}/workshop/start", "f", s.workshopStart)
 	api("PUT /api/servers/{id}/workshop/collection", "f", s.workshopCollection)
+	api("POST /api/servers/{id}/workshop/collections", "j", s.workshopCollectionAdd)
+	api("DELETE /api/servers/{id}/workshop/collections/{cid}", "j", s.workshopCollectionRemove)
 	api("GET /api/backups", "j", s.allBackups)
 	api("GET /api/backups/zip", "j", s.backupsZip)
 	api("POST /api/backups/now", "j", s.backupsNow)

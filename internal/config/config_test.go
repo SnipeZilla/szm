@@ -85,7 +85,8 @@ func TestWorkshopArgs(t *testing.T) {
 	cat, _ := games.Load("")
 	s := &Server{Port: 27015, Map: "de_dust2", WorkshopColl: "999999", WorkshopStart: "111111"}
 	got := strings.Join(s.BuildArgs(cat["cs2"]), " ")
-	if !strings.Contains(got, "+host_workshop_collection 999999") || !strings.HasSuffix(got, "+host_workshop_map 111111") || strings.Contains(got, "+map de_dust2") {
+	// its Workshop start map is changed to once it is up: it starts on its usual map
+	if !strings.Contains(got, "+host_workshop_collection 999999") || strings.Contains(got, "host_workshop_map") || !strings.HasSuffix(got, "+map de_dust2") {
 		t.Fatal(got)
 	}
 	s.WorkshopStart = ""

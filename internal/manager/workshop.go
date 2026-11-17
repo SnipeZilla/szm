@@ -3,6 +3,7 @@ package manager
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/SnipeZilla/szm/internal/config"
 	"github.com/SnipeZilla/szm/internal/events"
@@ -11,8 +12,10 @@ import (
 )
 
 // CS2 Workshop maps of a server: added by their ID or address (one map, or every map of a collection), played now
-// (host_workshop_map, by RCON), started on (+host_workshop_map), and a collection the server plays
-// (+host_workshop_collection). CS2 downloads them itself: nothing to install.
+// (host_workshop_map, by RCON), started on (the server starts on its usual map, and is changed to the Workshop map,
+// by RCON too, once it is up: a server given +host_workshop_map in place of +map has no map until the download
+// ends), and collections kept for it, one of which the server plays (+host_workshop_collection). CS2 downloads
+// them itself: nothing to install.
 
 // WorkshopAdded is what adding gave: the maps added, and the collection when it was one.
 type WorkshopAdded struct {
@@ -153,6 +156,37 @@ func (m *Manager) RemoveWorkshop(id, wid, by string) error {
 	return err
 }
 
+// workshopSwitch changes a CS2 server that has just come up (on its usual map) to the Workshop map it starts on.
+// Tried a few times: its RCON may open a moment after it answers queries. Not for a server whose own options give
+// +host_workshop_map: theirs is the one.
+func (m *Manager) workshopSwitch(i *Instance, id string) {
+	i.mu.Lock()
+	since := i.since
+	i.mu.Unlock()
+	var last error
+	for try := 0; try < 4; try++ {
+		time.Sleep(time.Duration(3+2*try) * time.Second)
+		s, ok := m.server(id)
+		g := m.Catalog()[s.Game]
+		if !ok || g == nil || g.Engine != games.Source2 || s.WorkshopStart == "" || config.ArgValue(s.Args, "+host_workshop_map") != "" {
+			return
+		}
+		i.mu.Lock()
+		gone := i.pid == 0 || !i.since.Equal(since) || i.busy != ""
+		i.mu.Unlock()
+		if gone {
+			return // ended, started again or being stopped meanwhile
+		}
+		if _, last = m.RconBy(id, "host_workshop_map "+s.WorkshopStart, ""); last == nil {
+			m.Log.Add(events.Info, id, s.Name, "Changing to its Workshop start map %s", workshopTitle(s, s.WorkshopStart))
+			return
+		}
+	}
+	if s, ok := m.server(id); ok {
+		m.Log.Add(events.Error, id, s.Name, "Could not change to its Workshop start map %s: %v. It stays on its usual map (Play, on its Maps tab, changes to it)", workshopTitle(s, s.WorkshopStart), last)
+	}
+}
+
 // SetWorkshopStart sets the Workshop map a server starts on ("": its usual map). At its next start.
 func (m *Manager) SetWorkshopStart(id, wid, by string) error {
 	if _, _, err := m.cs2(id); err != nil {
@@ -168,40 +202,165 @@ func (m *Manager) SetWorkshopStart(id, wid, by string) error {
 	if wid == "" {
 		m.Log.Add(events.Info, id, s.Name, "Starts on its map %s again (%s)", s.Map, by)
 	} else {
-		m.Log.Add(events.Info, id, s.Name, "Starts on the Workshop map %s, from its next start (%s)", workshopTitle(s, wid), by)
+		m.Log.Add(events.Info, id, s.Name, "Changes to the Workshop map %s once it is up, from its next start (%s)", workshopTitle(s, wid), by)
 	}
 	return nil
 }
 
-// SetWorkshopCollection sets the collection a server plays ("": none). At its next start.
-func (m *Manager) SetWorkshopCollection(id, input, by string) (string, error) {
-	if _, _, err := m.cs2(id); err != nil {
-		return "", err
+const maxCollections = 50
+
+// collTitle: how a collection is named in the activity and the page ("Winter maps (12 maps)").
+func collTitle(c config.WorkshopCollection) string {
+	if c.Maps > 0 {
+		return fmt.Sprintf("%s (%d maps)", c.Title, c.Maps)
 	}
-	cid, title := "", ""
-	if input != "" {
-		cid = workshop.ParseID(input)
-		if cid == "" {
-			return "", errors.New("paste the collection's ID or address")
-		}
-		children, ok, err := workshop.Collection(cid)
+	return c.Title
+}
+
+// lookCollection asks Steam for a collection: its name and how many maps it has.
+func lookCollection(input string) (config.WorkshopCollection, error) {
+	cid := workshop.ParseID(input)
+	if cid == "" {
+		return config.WorkshopCollection{}, errors.New("paste the collection's ID or address")
+	}
+	children, ok, err := workshop.Collection(cid)
+	if err != nil {
+		return config.WorkshopCollection{}, err
+	}
+	if !ok {
+		return config.WorkshopCollection{}, errors.New("this is not a Workshop collection (a map? add it to the list instead)")
+	}
+	c := config.WorkshopCollection{ID: cid, Title: cid, Maps: len(children)}
+	if d, err := workshop.Details([]string{cid}); err == nil && len(d) == 1 && d[0].Title != "" {
+		c.Title = d[0].Title
+	}
+	// its maps: their names and pictures, shown under it
+	if len(children) > maxWorkshop {
+		children = children[:maxWorkshop]
+	}
+	for k := 0; k < len(children); k += 100 {
+		part, err := workshop.Details(children[k:min(k+100, len(children))])
 		if err != nil {
-			return "", err
+			return c, err
 		}
-		if !ok {
-			return "", errors.New("this is not a Workshop collection (a map? add it to the list instead)")
+		for _, it := range part {
+			if it.AppID != 0 && it.AppID != 730 {
+				continue
+			}
+			c.List = append(c.List, config.WorkshopMap{ID: it.ID, Title: it.Title, Preview: it.Preview, Size: it.Size, Updated: it.Updated})
 		}
-		title = cid
-		if d, err := workshop.Details([]string{cid}); err == nil && len(d) == 1 {
-			title = d[0].Title
-		}
-		title = fmt.Sprintf("%s (%d maps)", title, len(children))
 	}
-	s, err := m.editServer(id, func(s *config.Server) error { s.WorkshopColl, s.WorkshopCollFor = cid, title; return nil })
+	return c, nil
+}
+
+// keepCollection puts a collection among those kept for a server (its newer name and size when it is there
+// already). The configuration is locked (editServer).
+func keepCollection(s *config.Server, c config.WorkshopCollection) error {
+	s.WorkshopColls = s.Collections()
+	for k := range s.WorkshopColls {
+		if s.WorkshopColls[k].ID == c.ID {
+			s.WorkshopColls[k] = c
+			return nil
+		}
+	}
+	if len(s.WorkshopColls) >= maxCollections {
+		return fmt.Errorf("%d collections are kept already: remove one first", maxCollections)
+	}
+	s.WorkshopColls = append(s.WorkshopColls, c)
+	return nil
+}
+
+// AddWorkshopCollection keeps a Workshop collection for a server (one for each season, say), to be picked as the
+// one it plays. What it plays does not change. One kept already is read again from Steam: its name and its maps.
+func (m *Manager) AddWorkshopCollection(id, input, by string) (config.WorkshopCollection, error) {
+	if _, _, err := m.cs2(id); err != nil {
+		return config.WorkshopCollection{}, err
+	}
+	c, err := lookCollection(input)
+	if err != nil {
+		return c, err
+	}
+	refresh := false // kept already: its name and maps read again
+	s, err := m.editServer(id, func(s *config.Server) error {
+		for _, k := range s.Collections() {
+			refresh = refresh || k.ID == c.ID
+		}
+		if err := keepCollection(s, c); err != nil {
+			return err
+		}
+		if s.WorkshopColl == c.ID {
+			s.WorkshopCollFor = collTitle(c)
+		}
+		return nil
+	})
+	if err != nil {
+		return c, err
+	}
+	if !refresh {
+		m.Log.Add(events.Info, id, s.Name, "Workshop collection %s kept by %s", collTitle(c), by)
+	}
+	return c, nil
+}
+
+// RemoveWorkshopCollection takes a collection off those kept for a server. The one it plays: it plays none, from
+// its next start.
+func (m *Manager) RemoveWorkshopCollection(id, cid, by string) error {
+	played := false
+	s, err := m.editServer(id, func(s *config.Server) error {
+		out := []config.WorkshopCollection{}
+		for _, c := range s.Collections() {
+			if c.ID != cid {
+				out = append(out, c)
+			}
+		}
+		s.WorkshopColls = out
+		if s.WorkshopColl == cid {
+			s.WorkshopColl, s.WorkshopCollFor, played = "", "", true
+		}
+		return nil
+	})
+	if err == nil && played {
+		m.Log.Add(events.Info, id, s.Name, "No Workshop collection any more, from its next start (removed by %s)", by)
+	}
+	return err
+}
+
+// SetWorkshopCollection sets the collection a server plays ("": none), from its next start: one of those kept
+// for it, by its ID, or a new one (its ID or address), which is kept too.
+func (m *Manager) SetWorkshopCollection(id, input, by string) (string, error) {
+	sv, _, err := m.cs2(id)
 	if err != nil {
 		return "", err
 	}
-	if cid == "" {
+	var c config.WorkshopCollection
+	if input != "" {
+		cid, kept := workshop.ParseID(input), false
+		for _, k := range sv.Collections() {
+			if k.ID == cid {
+				c, kept = k, true // kept already: Steam is not asked again
+			}
+		}
+		if !kept {
+			if c, err = lookCollection(input); err != nil {
+				return "", err
+			}
+		}
+	}
+	title := ""
+	s, err := m.editServer(id, func(s *config.Server) error {
+		if c.ID != "" {
+			if err := keepCollection(s, c); err != nil {
+				return err
+			}
+			title = collTitle(c)
+		}
+		s.WorkshopColl, s.WorkshopCollFor = c.ID, title
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if c.ID == "" {
 		m.Log.Add(events.Info, id, s.Name, "No Workshop collection any more, from its next start (%s)", by)
 	} else {
 		m.Log.Add(events.Info, id, s.Name, "Plays the Workshop collection %s, from its next start (%s)", title, by)
@@ -213,6 +372,13 @@ func workshopTitle(s config.Server, wid string) string {
 	for _, w := range s.Workshop {
 		if w.ID == wid {
 			return w.Title
+		}
+	}
+	for _, c := range s.WorkshopColls { // a map of one of its collections
+		for _, w := range c.List {
+			if w.ID == wid {
+				return w.Title
+			}
 		}
 	}
 	return wid

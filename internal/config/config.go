@@ -139,12 +139,42 @@ type Server struct {
 	RestartTime string `json:"restart_time,omitempty"`
 	Notes       string `json:"notes,omitempty"`
 
-	// CS2 Workshop: the maps added to it, the one it starts on (+host_workshop_map) and its collection
-	// (+host_workshop_collection: the server downloads it and plays its maps)
-	Workshop        []WorkshopMap `json:"workshop,omitempty"`
-	WorkshopStart   string        `json:"workshop_map,omitempty"`
-	WorkshopColl    string        `json:"workshop_collection,omitempty"`
-	WorkshopCollFor string        `json:"workshop_collection_title,omitempty"`
+	// CS2 Workshop: the maps added to it, the one it changes to once it is up (host_workshop_map, sent by RCON:
+	// it starts on its usual map), the collections kept for it (one for each season, say) and the one of them it
+	// plays (+host_workshop_collection: the server downloads it and plays its maps)
+	Workshop        []WorkshopMap        `json:"workshop,omitempty"`
+	WorkshopStart   string               `json:"workshop_map,omitempty"`
+	WorkshopColl    string               `json:"workshop_collection,omitempty"`
+	WorkshopCollFor string               `json:"workshop_collection_title,omitempty"`
+	WorkshopColls   []WorkshopCollection `json:"workshop_collections,omitempty"`
+}
+
+// WorkshopCollection is a Workshop collection kept for a server: one of them can be the one it plays. List: its
+// maps, as Steam gave them when it was kept or last refreshed (shown under it: what the server plays with it).
+type WorkshopCollection struct {
+	ID    string        `json:"id"`
+	Title string        `json:"title"`
+	Maps  int           `json:"maps,omitempty"`
+	List  []WorkshopMap `json:"list,omitempty"`
+}
+
+// Collections gives the Workshop collections kept for a server. The one it plays is always among them (a
+// configuration of before they were kept had that one only).
+func (s *Server) Collections() []WorkshopCollection {
+	out := append([]WorkshopCollection{}, s.WorkshopColls...)
+	if s.WorkshopColl == "" {
+		return out
+	}
+	for _, c := range out {
+		if c.ID == s.WorkshopColl {
+			return out
+		}
+	}
+	title := s.WorkshopCollFor
+	if title == "" {
+		title = s.WorkshopColl
+	}
+	return append(out, WorkshopCollection{ID: s.WorkshopColl, Title: title})
 }
 
 // AddonSource is where the new versions of an addon package are found, and what is done with them.
@@ -204,6 +234,11 @@ type DiscordHook struct {
 	Username string   `json:"username"`          // the poster's name
 	Events   []string `json:"events"`            // kinds of events posted: crash, failed, update, updated, restart, start, stop, error
 	Servers  []string `json:"servers,omitempty"` // only these servers (IDs); none: all, and the manager's own events
+	// Status: the channel also shows the live status of those servers, a message each, kept up to date (online or
+	// not, map, players, the last 24 hours). Join: the web address of a page that opens the game on a server, with
+	// {address} where its ip:port goes: the cards' "Join via Steam" (Discord opens web links only).
+	Status bool   `json:"status,omitempty"`
+	Join   string `json:"join,omitempty"`
 }
 
 // ForumPost is a XenForo forum the events go to (its REST API), as replies of a thread, or a new thread each time.
@@ -834,14 +869,10 @@ func (s *Server) BuildArgs(g *games.Game) []string {
 		defaults = append(defaults, option{o.key, v})
 	}
 
-	// CS2 Workshop: its collection, and the Workshop map it starts on (in place of +map)
-	if g.Engine == games.Source2 {
-		if s.WorkshopColl != "" && !given["+host_workshop_collection"] {
-			extra = append(extra, option{"+host_workshop_collection", s.WorkshopColl})
-		}
-		if s.WorkshopStart != "" && !given["map"] {
-			mapOpt = []option{{"+host_workshop_map", s.WorkshopStart}}
-		}
+	// CS2 Workshop: its collection. Its Workshop start map is not given here: the server starts on its usual map
+	// (+map) and the manager changes to the Workshop map once it is up (workshop.go)
+	if g.Engine == games.Source2 && s.WorkshopColl != "" && !given["+host_workshop_collection"] {
+		extra = append(extra, option{"+host_workshop_collection", s.WorkshopColl})
 	}
 
 	all := append(defaults, extra...)

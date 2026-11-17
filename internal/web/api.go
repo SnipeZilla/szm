@@ -1010,8 +1010,16 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request, u *User) er
 	s.M.Cfg.RLock()
 	st := s.M.Cfg.Settings
 	s.M.Cfg.RUnlock()
+	// how the status cards of each Discord channel are doing, in their order
+	cards := make([]manager.BoardStatus, len(st.Discords))
+	for k, d := range st.Discords {
+		if d.Status {
+			cards[k] = s.M.BoardStatus(d.Webhook)
+		}
+	}
 	return writeJSON(w, map[string]any{
 		"settings":    st,
+		"cards":       cards,
 		"linked_hub":  s.linkedHub(),
 		"data_dir":    s.M.DataDir,
 		"steamcmd":    s.M.SteamCmdPath(),
@@ -1050,6 +1058,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request, u *User) er
 		}
 		if d.Webhook != "" && !notify.Valid(d.Webhook) {
 			errs = append(errs, "Discord \""+d.Name+"\": the webhook must start with https://discord.com/api/webhooks/.")
+		}
+		d.Join = strings.TrimSpace(d.Join)
+		if err := manager.ValidJoin(d.Join); err != nil {
+			errs = append(errs, "Discord \""+d.Name+"\": "+err.Error()+".")
+		}
+		if d.Status && d.Webhook == "" {
+			errs = append(errs, "Discord \""+d.Name+"\": the live status needs the webhook.")
 		}
 	}
 	for k := range st.Forums {

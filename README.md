@@ -26,6 +26,7 @@ What made 1.x worth running is all here, working the way it did:
 - **Addons manager:** Metamod, SourceMod, CounterStrikeSharp and AMX Mod X kept as packages, and pushed into the servers without touching their configs or the plugins you removed. New versions are checked for, told or installed by themselves (one server first), and a fix is watched for after crashes an addon caused.
 - **Other engines too:** Rust, 7 Days to Die, ARK, Valheim, Palworld, DayZ, Call of Duty: Black Ops III and more, installed, updated, watched and stopped cleanly the same way ([GUIDE](GUIDE.md#games-of-other-engines)).
 - **Posts to Discord and XenForo:** crashes, updates and restarts, each channel with what it wants. No more emails.
+- **Live status in Discord:** a card per server, kept up to date: online or not, map, players, and the last 24 hours as a chart. Only a webhook is needed.
 - **Files across servers and machines:** copy and paste between servers, even from one machine to another, in a file manager with upload and editing; plus a map cycle editor and CS2 Workshop maps.
 - **Backups** of each server's settings and plugins, with a copy on **Google Drive, OneDrive** or another disk.
 - **A modern web page:** live status, console and RCON, users with rights, and it works on my phone.

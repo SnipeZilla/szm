@@ -333,6 +333,21 @@ func (s *Server) rename(w http.ResponseWriter, r *http.Request, u *User) error {
 }
 
 // upload saves the files of a form into a folder of the server (streamed: no size limit but the disk).
+// uploadRel reads the folder a file of an uploaded folder goes in ("maps/workshop"): its names only, none going up.
+func uploadRel(v string) (string, error) {
+	var out []string
+	for _, p := range strings.Split(strings.ReplaceAll(v, `\`, "/"), "/") {
+		switch p = strings.TrimSpace(p); p {
+		case "", ".":
+		case "..":
+			return "", fail(http.StatusBadRequest, "Bad upload: a folder that goes up.")
+		default:
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "/"), nil
+}
+
 func (s *Server) upload(w http.ResponseWriter, r *http.Request, u *User) error {
 	sv, err := s.fileRoot(r)
 	if err != nil {
@@ -347,6 +362,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, u *User) error {
 		return fail(http.StatusBadRequest, "Bad upload.")
 	}
 	var names []string
+	rel := "" // the folder, under the one uploaded into, of the files that follow (a folder uploaded keeps its tree)
 	for {
 		part, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -355,17 +371,28 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, u *User) error {
 		if err != nil {
 			return fail(http.StatusBadRequest, "Upload: %v", err)
 		}
+		if part.FormName() == "rel" {
+			b, _ := io.ReadAll(io.LimitReader(part, 4096))
+			part.Close()
+			if rel, err = uploadRel(string(b)); err != nil {
+				return err
+			}
+			continue
+		}
 		name := filepath.Base(strings.ReplaceAll(part.FileName(), `\`, "/"))
 		if part.FormName() != "file" || name == "" || name == "." || name == "/" {
 			part.Close()
 			continue
 		}
-		target, err := jail(sv.InstallDir, relOf(sv.InstallDir, filepath.Join(dir, name)))
+		target, err := jail(sv.InstallDir, relOf(sv.InstallDir, filepath.Join(dir, filepath.FromSlash(rel), name)))
 		if err != nil {
 			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
+			return fail(http.StatusBadRequest, "%s", capitalize(err.Error()))
+		}
+		if rel != "" {
+			name = rel + "/" + name
 		}
 		tmp := target + ".szm-upload"
 		f, err := os.Create(tmp)
@@ -386,7 +413,11 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request, u *User) error {
 		names = append(names, name)
 	}
 	if len(names) > 0 {
-		s.M.Log.Add(events.Info, sv.ID, sv.Name, "%s uploaded %s into /%s", u.Name, strings.Join(names, ", "), relOf(sv.InstallDir, dir))
+		what := strings.Join(names, ", ")
+		if len(names) > 8 { // a folder: not its hundreds of names
+			what = fmt.Sprintf("%d files (%s…)", len(names), strings.Join(names[:3], ", "))
+		}
+		s.M.Log.Add(events.Info, sv.ID, sv.Name, "%s uploaded %s into /%s", u.Name, what, relOf(sv.InstallDir, dir))
 	}
 	if id := r.PathValue("id"); id != "" {
 		s.M.ForgetSize(id)
@@ -611,6 +642,7 @@ func (s *Server) maps(w http.ResponseWriter, r *http.Request, u *User) error {
 			ws = []config.WorkshopMap{}
 		}
 		out["workshop"], out["workshop_map"], out["workshop_collection"], out["workshop_collection_title"] = ws, sv.WorkshopStart, sv.WorkshopColl, sv.WorkshopCollFor
+		out["workshop_collections"] = sv.Collections()
 	}
 	if g.Engine == games.Source2 {
 		rel := gameModesPath(g)
