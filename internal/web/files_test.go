@@ -1,12 +1,18 @@
 package web
 
 import (
+	"bytes"
+	"encoding/binary"
 	"net/http"
+	"os"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/SnipeZilla/szm/internal/config"
+	"github.com/SnipeZilla/szm/internal/games"
 )
 
 func TestJail(t *testing.T) {
@@ -91,5 +97,84 @@ func TestUploadRel(t *testing.T) {
 	}
 	if _, err := uploadRel("a/../../b"); err == nil {
 		t.Fatal("a folder that goes up was taken")
+	}
+}
+
+func TestWorkshopNames(t *testing.T) {
+	dir := t.TempDir()
+	put := func(rel string) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := workshopDirs[0] + "/"
+	put(w + "3256988376/de_warden.vpk")
+	put(w + "3643331442/de_sanctum_dir.vpk") // a part only: no name
+	put(w + "3366748499/readme.txt")
+	put(workshopDirs[1] + "/3070284539/de_dust2_night.vpk")
+	// as CS2 keeps it: a .vpk named by the ID, the map inside it
+	var v bytes.Buffer
+	binary.Write(&v, binary.LittleEndian, []uint32{0x55aa1234, 2, 0, 0, 0, 0, 0})
+	entry := make([]byte, 18)
+	v.WriteString("vmdl_c\x00models\x00box\x00")
+	v.Write(entry)
+	v.WriteString("\x00\x00vpk\x00maps\x00awp_lego_3\x00")
+	v.Write(entry)
+	v.WriteString("\x00\x00\x00")
+	b := v.Bytes()
+	binary.LittleEndian.PutUint32(b[8:], uint32(len(b)-28))
+	p := filepath.Join(dir, filepath.FromSlash(w+"3240327667/3240327667_dir.vpk"))
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	os.WriteFile(p, b, 0o644)
+	got := workshopNames(config.Server{InstallDir: dir}, &games.Game{})
+	want := map[string]string{"3256988376": "de_warden", "3070284539": "de_dust2_night", "3240327667": "awp_lego_3", "3643331442": "de_sanctum"}
+	if len(got) != len(want) || got["3240327667"] != "awp_lego_3" || got["3643331442"] != "de_sanctum" || got["3256988376"] != want["3256988376"] || got["3070284539"] != want["3070284539"] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestUserScope(t *testing.T) {
+	all := &User{Rights: "eg"}
+	machine := &User{Rights: "g", Machines: []string{"us"}}
+	here := &User{Rights: "g", Machines: []string{ThisMachine}}
+	some := &User{Rights: "g", Servers: []string{"css-1", "eu~cs2-1"}}
+	for _, c := range []struct {
+		u    *User
+		id   string
+		want bool
+	}{
+		{all, "css-1", true}, {all, "us~css-1", true},
+		{machine, "us~css-1", true}, {machine, "us~new", true}, {machine, "css-1", false}, {machine, "eu~cs2-1", false},
+		{here, "css-1", true}, {here, "us~css-1", false},
+		{some, "css-1", true}, {some, "eu~cs2-1", true}, {some, "eu~cs2-2", false}, {some, "css-2", false},
+	} {
+		if got := c.u.Sees(c.id); got != c.want {
+			t.Errorf("%+v sees %s: %v, want %v", *c.u, c.id, got, c.want)
+		}
+	}
+	if !some.OnMachine("eu") || some.OnMachine("us") || !some.OnMachine(ThisMachine) || machine.OnMachine(ThisMachine) {
+		t.Error("OnMachine")
+	}
+	boss := &User{Name: "b", Rights: "dgi", Machines: []string{"us"}}
+	for x, want := range map[*User]bool{
+		{Name: "x", Rights: "g", Servers: []string{"us~css-1"}}: true,
+		{Name: "x", Rights: "gi", Machines: []string{"us"}}:      true,
+		{Name: "B", Rights: "a"}:                                 true, // themselves
+		{Name: "x", Rights: "a"}:                                 false,
+		{Name: "x", Rights: "eg"}:                                false,
+		{Name: "x", Rights: "gj", Machines: []string{"us"}}:      false,
+		{Name: "x", Rights: "g", Servers: []string{"css-1"}}:     false,
+		{Name: "x", Rights: "g", Machines: []string{"eu"}}:       false,
+	} {
+		if boss.Manages(x) != want {
+			t.Errorf("manages %+v: want %v", *x, want)
+		}
+	}
+	if !machine.elsewhere() || here.elsewhere() || some.elsewhere() || all.elsewhere() || (&User{Rights: "c"}).elsewhere() {
+		t.Error("elsewhere")
 	}
 }

@@ -206,6 +206,7 @@ func (s *Server) routes() http.Handler {
 	api("POST /api/servers/{id}/rename", "j", s.rename)
 	api("GET /api/servers/{id}/maps", "", s.maps)
 	api("PUT /api/servers/{id}/mapcycle", "j", s.saveMapcycle)
+	api("DELETE /api/servers/{id}/mapgroups/{group}", "j", s.deleteMapGroup)
 	api("GET /api/servers/{id}/setupfiles", "j", s.setupFiles)
 	api("GET /api/servers/{id}/cvars", "j", s.cvars)
 	api("POST /api/servers/{id}/steamlogin", "h", s.steamLogin)
@@ -319,6 +320,12 @@ func (s *Server) wrap(right string, h handler) http.HandlerFunc {
 			writeErr(w, fail(http.StatusNotFound, "No such server."))
 			return
 		}
+		// what is this machine's own (its settings, addons, backups, a new server): not for a user whose machines
+		// and servers are all elsewhere
+		if r.PathValue("id") == "" && right != "" && strings.Contains("bchj", right) && u.elsewhere() {
+			writeErr(w, errForbidden)
+			return
+		}
 		if err := h(w, r, u); err != nil {
 			writeErr(w, err)
 		}
@@ -371,7 +378,7 @@ func (s *Server) me(u *User) map[string]any {
 	if strings.Contains(rights, "a") {
 		rights = allRights
 	}
-	return map[string]any{"name": u.Name, "rights": rights, "servers": u.Servers}
+	return map[string]any{"name": u.Name, "rights": rights, "servers": u.Servers, "machines": u.Machines}
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, name string, remember bool) {

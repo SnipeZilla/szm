@@ -340,7 +340,8 @@ const MACHINE_PAGES = ['settings', 'games', 'addons', 'backups', 'cache', 'new']
 // A hub with no servers of its own (on a web server, only for the page): left out of the machine lists, but for
 // its Settings (its users, Discord, forums, machines) and the New server page (to give it one after all).
 const hubOnly = mc => !!(mc && mc.local && !mc.servers);
-const machinesFor = page => (S.machines || []).filter(mc => !hubOnly(mc) || page === 'settings' || page === 'new');
+// (not for a user whose machines and servers are all elsewhere: mc.off, it is not theirs)
+const machinesFor = page => (S.machines || []).filter(mc => !mc.off && (!hubOnly(mc) || page === 'settings' || page === 'new'));
 // the machine of a machine page: the one picked last, a hub with no servers only on the page it was picked on
 // (Settings by default)
 function pickedMachine(page) {
@@ -622,8 +623,18 @@ function applyState(st) {
   if ('crashes' in st) S.crashes = st.crashes || 0;
 }
 
+// what a user can do and looks after, to tell when someone changed it
+const userKey = u => u ? JSON.stringify([u.rights, u.servers || [], u.machines || []]) : '';
 function onState(st) {
+  const was = userKey(S.user);
   applyState(st);
+  if (was && userKey(S.user) !== was) {
+    // their rights were changed while the page was open: its menus and the page shown are drawn again with them
+    toast('Your rights were changed: the page was updated.', 'info');
+    buildShell();
+    route();
+    return;
+  }
   updateTop();
   if (view && view.update) view.update();
 }
@@ -1089,8 +1100,11 @@ function pageDashboard() {
   // every disk; above Activity, first on a phone
   function renderHere() {
     const m = S.machine;
-    if (!m || !m.mem_total) { clear(here); return; }
     const mc = machineBy('');
+    // (not theirs to look at: a user whose machines and servers are all elsewhere does not see this machine)
+    const none = !m || !m.mem_total || !!(mc && mc.off);
+    here.classList.toggle('hidden', none);
+    if (none) { clear(here); return; }
     const used = (m.mem_total - m.mem_free) / m.mem_total;
     const os = m.os ? (m.os.startsWith('windows') ? 'Windows' : 'Linux') : '';
     const disks = (m.disks || []).slice().sort((a, b) => a.path.localeCompare(b.path));
@@ -1568,7 +1582,7 @@ function tabOverview(id) {
     if (!v) return;
     const up = isUp(v);
     const n = humans(v);
-    swap(stats,
+    patch(stats,
       stat('Map', up && v.info ? v.info.map : '—'),
       stat('Players', up && v.info ? `${n} / ${v.info.maxplayers}` : '—', up && v.info && v.info.bots ? `+${v.info.bots} bot${v.info.bots > 1 ? 's' : ''}` : ''),
       stat('Uptime', up && v.started ? fmtDur(now() - v.started) : '—'),
@@ -1609,10 +1623,10 @@ function tabOverview(id) {
     if (up && !v.info && v.status === 'starting') list.push(h('div', { class: 'note info' }, 'Waiting for the server to answer queries on ' + v.address + '…'));
     if (v.foreign) list.push(h('div', { class: 'note info' }, 'This server was started outside the manager, as another Windows user (the old manager ran as SYSTEM). The manager watches it, restarts it if it crashes and stops it through RCON, but Windows does not let it force the server to end if RCON fails. Run the manager as administrator or as the service for full control; the next time it starts the server itself, this goes away.'));
     if (v.notes) list.push(h('div', { class: 'note', style: 'background:var(--bg-2);white-space:pre-wrap' }, v.notes));
-    swap(notes, list);
+    patch(notes, list);
 
     if (up && v.players && v.players.length) {
-      swap(players, h('table', { class: 'list' },
+      patch(players, h('table', { class: 'list' },
         h('thead', null, h('tr', null, h('th', null, 'Player'), h('th', { class: 'num' }, 'Score'), h('th', { class: 'num' }, 'Time'))),
         h('tbody', null, v.players.slice().sort((a, b) => (a.bot - b.bot) || (b.score - a.score) || (b.duration - a.duration)).map(p =>
           h('tr', null,
@@ -1620,7 +1634,7 @@ function tabOverview(id) {
             h('td', { class: 'num' }, p.no_score ? h('span', { class: 'muted' }, '—') : p.score),
             h('td', { class: 'num' }, p.bot && !p.duration ? h('span', { class: 'muted' }, '—') : fmtDur(p.duration)))))));
     } else {
-      swap(players, h('div', { class: 'muted small', style: 'padding:16px' }, up ? 'Nobody is playing.' : 'The server is not running.'));
+      patch(players, h('div', { class: 'muted small', style: 'padding:16px' }, up ? 'Nobody is playing.' : 'The server is not running.'));
     }
   }
 
@@ -2574,17 +2588,56 @@ function tabMaps(id) {
     if (await run(() => api('POST', base + '/rcon', { command: 'changelevel ' + name }), 'Changing to ' + name + '…')) setTimeout(load, 4000);
   }
 
+  // CS2: a Workshop map in a map group is workshop/ID/name (name: its .vpk, known once the server downloaded it)
+  const wsKey = m => { const x = /^workshop\/(\d+)\/([^/]+)$/i.exec(m); return x ? { id: x[1], name: x[2] } : null; };
+  // The Workshop maps of the server (its own, and those of its collections), each once, with its map name when known
+  function wsEntries() {
+    const seen = new Set(), out = [];
+    const names = data.workshop_names || {};
+    [data.workshop || [], ...(data.workshop_collections || []).map(c => c.list || [])].forEach(list => list.forEach(w => {
+      if (seen.has(w.id)) return;
+      seen.add(w.id);
+      const name = names[w.id] || '';
+      // not downloaded yet: its name is not known. Its title stands in (the save puts the real one once the server has it)
+      const guess = (w.title || '').trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_.-]/g, '') || w.id;
+      out.push({ w, name, key: 'workshop/' + w.id + '/' + (name || guess) });
+    }));
+    return out.sort((a, b) => (a.w.title || '').localeCompare(b.w.title || ''));
+  }
+  // Play now: a map of the server's folder (changelevel), or a Workshop map (host_workshop_map)
+  function playKey(m) {
+    const k = wsKey(m);
+    if (!k) return changeMap(m);
+    const e = wsEntries().find(x => x.w.id === k.id);
+    return playWorkshop(e ? e.w : { id: k.id, title: k.name });
+  }
+  const playBtn = (label, fn) => h('button', { class: 'btn sm ghost icon play', title: 'Play it now', 'aria-label': 'Play ' + label + ' now', onclick: fn }, icon('play'));
   function renderLeft() {
     const q = search.value.toLowerCase();
     const list = data.maps.filter(m => !q || m.toLowerCase().includes(q));
-    countL.textContent = list.length + ' of ' + data.maps.length;
-    if (!data.maps.length) { swap(left, h('div', { class: 'muted small', style: 'padding:14px' }, 'No map found in the maps folder (is the server installed?).')); return; }
+    const ws = wsEntries();
+    const wsList = ws.filter(e => !q || (e.w.title || '').toLowerCase().includes(q) || e.name.toLowerCase().includes(q) || e.w.id.includes(q));
+    const adding = data.cycle_supported && can('j');
+    const addBtn = (key, label) => h('button', { class: 'btn sm ghost icon', title: 'Add to the ' + (g.engine === 'source2' ? 'map group' : 'cycle'), 'aria-label': 'Add ' + label + ' to the ' + (g.engine === 'source2' ? 'map group' : 'cycle'), onclick: () => { cycle.push(key); markDirty(); } }, icon('plus'));
+    countL.textContent = (list.length + wsList.length) + ' of ' + (data.maps.length + ws.length);
+    if (!data.maps.length && !ws.length) { swap(left, h('div', { class: 'muted small', style: 'padding:14px' }, 'No map found in the maps folder (is the server installed?).')); return; }
     swap(left, list.map(m => h('div', { class: 'mapitem' + (m === data.current ? ' current' : '') },
       h('span', { class: 'n', title: m }, m), m === data.current ? h('span', { class: 'tag green' }, 'now') : null,
-      data.cycle_supported && can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Add to the cycle', 'aria-label': 'Add ' + m + ' to the cycle', onclick: () => { cycle.push(m); markDirty(); } }, icon('plus')) : null,
-      canChange() ? h('button', { class: 'btn sm ghost icon', title: 'Change to this map now', 'aria-label': 'Change to ' + m, onclick: () => changeMap(m) }, icon('play')) : null)));
+      canChange() ? playBtn(m, () => changeMap(m)) : null,
+      adding ? addBtn(m, m) : null)),
+    wsList.length ? h('div', { class: 'mapsep' }, icon('globe'), 'Workshop') : null,
+    wsList.map(e => {
+      const now = e.name && e.name === data.current;
+      return h('div', { class: 'mapitem' + (now ? ' current' : '') },
+        h('span', { class: 'n', title: e.w.title + (e.name ? '\n' + e.key : '') },
+          e.w.title, h('small', { class: 'muted' }, ' ' + (e.name || e.w.id))),
+        now ? h('span', { class: 'tag green' }, 'now') : null,
+        canChange() ? playBtn(e.w.title, () => playWorkshop(e.w)) : null,
+        adding ? addBtn(e.key, e.w.title) : null);
+    }));
   }
 
+  const wsTitle = wid => { const e = wsEntries().find(x => x.w.id === wid); return e ? e.w.title : ''; };
   let dragFrom = -1;
   function renderRight() {
     countR.textContent = cycle.length + ' maps' + (dirty ? ' · not saved' : '');
@@ -2594,11 +2647,14 @@ function tabMaps(id) {
     swap(right, nGone ? h('div', { class: 'note warn small', style: 'margin:8px' }, nGone === 1 ? '1 map of it is not on this server' : nGone + ' maps of it are not on this server',
       ' (its console said so when it tried to load ' + (nGone === 1 ? 'it' : 'them') + '). Remove ' + (nGone === 1 ? 'it' : 'them') + ', or add ' + (nGone === 1 ? 'its file' : 'their files') + '.') : null, cycle.map((m, i) => {
       const missing = gone[m.toLowerCase()];
-      const row = h('div', { class: 'mapitem' + (m === data.current ? ' current' : ''), draggable: can('j') },
+      const wk = wsKey(m);
+      const row = h('div', { class: 'mapitem' + ((wk ? wk.name : m) === data.current ? ' current' : ''), draggable: can('j') },
         can('j') ? h('span', { class: 'grip', title: 'Drag to move' }, icon('grip')) : null,
-        h('span', { class: 'idx' }, i + 1), h('span', { class: 'n', title: m }, m),
+        h('span', { class: 'idx' }, i + 1),
+        wk ? h('span', { class: 'n', title: (wsTitle(wk.id) ? wsTitle(wk.id) + '\n' : '') + m }, wk.name, h('small', { class: 'muted' }, ' Workshop'))
+          : h('span', { class: 'n', title: m }, m),
         missing ? h('span', { class: 'tag red', title: 'Its console said it does not have this map, ' + new Date(missing * 1000).toLocaleString() }, 'not on this server') : null,
-        canChange() ? h('button', { class: 'btn sm ghost icon', title: 'Change to this map now', 'aria-label': 'Change to ' + m, onclick: () => changeMap(m) }, icon('play')) : null,
+        canChange() ? playBtn(wk ? wk.name : m, () => playKey(m)) : null,
         can('j') ? h('button', { class: 'btn sm ghost icon', title: 'Remove', 'aria-label': 'Remove ' + m, onclick: () => { cycle.splice(i, 1); markDirty(); } }, icon('x')) : null);
       row.addEventListener('dragstart', e => { dragFrom = i; row.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
       row.addEventListener('dragend', () => row.classList.remove('dragging'));
@@ -2659,6 +2715,20 @@ function tabMaps(id) {
     });
     return sel;
   }
+  // CS2: delete the map group shown, from gamemodes_server.txt. Not the one it plays: another is picked and saved first.
+  function deleteGroupBtn() {
+    if (!can('j') || !(data.map_groups || []).some(n => n.toLowerCase() === group.toLowerCase())) return null;
+    const plays = data.map_group_set && (data.map_group || '').toLowerCase() === group.toLowerCase();
+    return h('button', { class: 'btn sm ghost icon', disabled: plays, 'aria-label': 'Delete the map group ' + group,
+      title: plays ? 'The server plays this group (+mapgroup): pick another one and save it first' : 'Delete this map group from ' + (data.cycle_path || 'gamemodes_server.txt'),
+      onclick: async () => {
+        const name = group;
+        if (!await confirmBox('Delete the map group ' + name + '?', 'It is taken out of ' + data.cycle_path + '. Its maps stay installed.', 'Delete', true)) return;
+        if (!await run(() => api('DELETE', base + '/mapgroups/' + encodeURIComponent(name)), 'Map group ' + name + ' deleted.')) return;
+        dirty = false; saveBtn.disabled = true;
+        load();
+      } }, icon('trash'));
+  }
   const cycleHead = h('div', { class: 'hd' });
   const cycleNote = h('div', { class: 'bd col', style: 'border-top:1px solid var(--line)' });
   function drawCycleHead() {
@@ -2672,8 +2742,11 @@ function tabMaps(id) {
     swap(cycleHead, icon('restart'),
       h('div', { class: 'grow', style: 'min-width:0' }, h('h2', null, cs2 ? 'Map group' : 'Map cycle'),
         h('div', { class: 'muted small mono ellipsis', title: data.cycle_path }, cs2 ? data.cycle_path.split('/').pop() : data.cycle_path)),
-      cs2 ? groupPicker() : null, countR,
-          can('j') ? h('button', { class: 'btn sm ghost', onclick: () => { if (data.maps.length) { cycle = data.maps.slice(); markDirty(); } } }, 'All') : null,
+      cs2 ? groupPicker() : null, cs2 ? deleteGroupBtn() : null, countR,
+          can('j') ? h('button', { class: 'btn sm ghost', title: 'Every map of the list' + (cs2 ? ' (the Workshop ones too)' : ''), onclick: () => {
+            const all = data.maps.concat(cs2 ? wsEntries().map(e => e.key) : []);
+            if (all.length) { cycle = all; markDirty(); }
+          } }, 'All') : null,
           can('j') ? h('button', { class: 'btn sm ghost', onclick: () => { cycle = []; markDirty(); } }, 'Clear') : null, saveBtn);
   }
   load().then(() => {
@@ -5140,12 +5213,12 @@ function gameForm(g0, icons, onSaved) {
   const exeLin = (g.exe && g.exe.linux || []).join(', ');
   const m = modal({ title: isNew ? 'Add a game' : 'Change ' + g.name, size: 'wide' });
   const err = h('div');
-  const keyIn = h('input', { type: 'text', value: g.key, spellcheck: false, disabled: !isNew, placeholder: 'fof' });
+  const keyIn = h('input', { type: 'text', value: g.key, spellcheck: false, disabled: !isNew, placeholder: 'tf' });
   let keyTouched = !isNew;
   keyIn.addEventListener('input', () => { keyTouched = true; });
   const autoKey = () => { if (!keyTouched) keyIn.value = (g.short || g.name).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 32); };
-  const nameIn = bindText(g, 'name', { placeholder: 'Fistful of Frags' });
-  const shortIn = bindText(g, 'short', { placeholder: 'FoF' });
+  const nameIn = bindText(g, 'name', { placeholder: 'Team Fortress 2' });
+  const shortIn = bindText(g, 'short', { placeholder: 'TF2' });
   nameIn.addEventListener('input', autoKey);
   shortIn.addEventListener('input', autoKey);
   const winIn = h('input', { type: 'text', value: exeWin, spellcheck: false });
@@ -5247,12 +5320,12 @@ function gameForm(g0, icons, onSaved) {
     field('Short name', shortIn, 'On the cards and in Discord: TF2, CS:S…'),
     field('Key', keyIn, isNew ? 'Its id in the manager, letters and digits. Cannot change later.' : 'Its id in the manager.'),
     field('Engine', engineSel),
-    field('Dedicated server app ID', bindText(g, 'server_appid', { type: 'number', min: 1, placeholder: '295230' }),
+    field('Dedicated server app ID', bindText(g, 'server_appid', { type: 'number', min: 1, placeholder: '232250' }),
       h('span', null, 'What steamcmd downloads. Find it on ', h('a', { href: 'https://developer.valvesoftware.com/wiki/Dedicated_Servers_List', target: '_blank', rel: 'noopener' }, 'Valve\'s list'), ' or ', h('a', { href: 'https://steamdb.info/search/?a=app&q=dedicated+server', target: '_blank', rel: 'noopener' }, 'SteamDB'), '. GoldSrc mods: 90.')),
     field('Game app ID', bindText(g, 'appid', { type: 'number', min: 0, placeholder: 'Optional' }), 'The game players buy: for the update check. Optional.'),
     field('Web page', bindText(g, 'url', { type: 'url', placeholder: 'https://store.steampowered.com/app/…', spellcheck: false }), 'Its page, linked from the list of games. Empty: its Steam store page (from the game app ID).', true),
-    field('Game folder', bindText(g, 'game', { placeholder: 'fof' }), 'Its -game folder, inside the server: cstrike, tf, csgo… (none for the other engines)'),
-    field('First map', bindText(g, 'default_map', { placeholder: 'fof_fistful' }), 'What a new server starts on.'),
+    field('Game folder', bindText(g, 'game', { placeholder: 'tf' }), 'Its -game folder, inside the server: cstrike, tf, csgo… (none for the other engines)'),
+    field('First map', bindText(g, 'default_map', { placeholder: 'ctf_2fort' }), 'What a new server starts on.'),
     field('Max players', bindText(g, 'default_maxplayers', { type: 'number', min: 1, max: 255 })),
     field('Program on Windows', winIn, 'Inside the server\'s folder. Several, comma separated: the first found is used.', true),
     field('Program on Linux', linIn, null, true),
@@ -5273,6 +5346,7 @@ function pageUsers() {
   const tbody = h('tbody');
   let users = [];
   let rights = {};
+  const isMe = u => u.name.toLowerCase() === S.user.name.toLowerCase();
 
   async function load() {
     const r = await run(() => api('GET', 'api/users'));
@@ -5287,21 +5361,28 @@ function pageUsers() {
       const admin = u.rights.includes('a');
       return h('tr', null,
         h('td', null, h('div', { class: 'row' }, h('div', { class: 'avatar', style: 'width:30px;height:30px;font-size:12px;cursor:default' }, u.name[0].toUpperCase()),
-          h('div', null, h('b', null, u.name), u.name === S.user.name ? h('span', { class: 'tag purple', style: 'margin-left:6px' }, 'you') : null))),
+          h('div', null, h('b', null, u.name), isMe(u) ? h('span', { class: 'tag purple', style: 'margin-left:6px' }, 'you') : null))),
         h('td', null, admin ? h('span', { class: 'tag purple' }, 'Admin') : h('div', { class: 'chips' }, u.rights.split('').map(c => h('span', { class: 'tag', title: rights[c] }, rights[c] || c)))),
-        h('td', { class: 'muted small' }, admin || u.rights.includes('e') ? 'All' : (u.servers || []).map(id => (serverBy(id) || { name: id }).name).join(', ') || 'None'),
+        h('td', { class: 'muted small' }, admin || u.rights.includes('e') ? 'All'
+          : (u.machines || []).map(mid => 'Machine ' + scopeMachineName(mid)).concat((u.servers || []).filter(id => !(u.machines || []).includes(machineOfId(id))).map(id => (serverBy(id) || { name: id }).name)).join(', ') || 'None'),
         h('td', { class: 'muted small nowrap' }, u.last_login ? timeAgo(u.last_login) : 'never'),
         h('td', { class: 'nowrap', style: 'text-align:right' },
-          h('button', { class: 'btn sm ghost', onclick: () => edit(u) }, icon('edit'), 'Edit'),
-          u.name !== S.user.name ? h('button', { class: 'btn sm ghost icon', title: 'Delete', 'aria-label': 'Delete ' + u.name, onclick: async () => {
+          // (not themselves: someone above them changes their rights; their password is on the Your account page)
+          !isMe(u) ? h('button', { class: 'btn sm ghost', onclick: () => edit(u) }, icon('edit'), 'Edit')
+            : h('a', { class: 'btn sm ghost', href: '#/account', title: 'Your rights are changed by another user who manages you. Your password: here.' }, icon('key'), 'Password'),
+          !isMe(u) ? h('button', { class: 'btn sm ghost icon', title: 'Delete', 'aria-label': 'Delete ' + u.name, onclick: async () => {
             if (await confirmBox('Delete ' + u.name + '?', 'They can not sign in any more.', 'Delete', true) && await run(() => api('DELETE', 'api/users/' + encodeURIComponent(u.name)), u.name + ' deleted.')) load();
           } }, icon('trash')) : null));
     }));
   }
 
+  // The machines a user can be given: this one is "." there, a linked one its ID (a server of it: "id~server")
+  const machineOfId = id => id.includes('~') ? id.split('~')[0] : '.';
+  const scopeMachineName = mid => mid === '.' ? (S.machines ? machineName('') : 'this machine') : (machineBy(mid) || { name: mid }).name;
+
   function edit(u) {
     const isNew = !u;
-    const st = { name: u ? u.name : '', rights: new Set(u ? u.rights.split('') : ['e', 'g', 'i']), servers: new Set(u ? u.servers || [] : []), password: '' };
+    const st = { name: u ? u.name : '', rights: new Set(u ? u.rights.split('') : ['g', 'i']), servers: new Set(u ? u.servers || [] : []), machines: new Set(u ? u.machines || [] : []), password: '' };
     const m = modal({ title: isNew ? 'New user' : 'Edit ' + u.name, size: 'wide' });
     const nameIn = h('input', { type: 'text', value: st.name, readOnly: !isNew, spellcheck: false, autocomplete: 'off' });
     const pwIn = h('input', { type: 'password', autocomplete: 'new-password', placeholder: isNew ? '8 characters or more' : 'Leave empty to keep it' });
@@ -5309,17 +5390,49 @@ function pageUsers() {
     const serversWrap = h('div');
     const renderRights = () => {
       const admin = st.rights.has('a');
-      swap(rightsEl, Object.keys(rights).sort().map(c => {
-        const inp = h('input', { type: 'checkbox', checked: admin || st.rights.has(c), disabled: admin && c !== 'a' || (!can('a') && !can(c)) });
+      // "Sees every server" (e) is not a box here: it is the first choice of what they look after, below
+      // (a right the one signed in does not have is not theirs to give: not shown)
+      swap(rightsEl, Object.keys(rights).sort().filter(c => c !== 'e' && can(c)).map(c => {
+        const inp = h('input', { type: 'checkbox', checked: admin || st.rights.has(c), disabled: admin && c !== 'a' });
         inp.addEventListener('change', () => { inp.checked ? st.rights.add(c) : st.rights.delete(c); renderRights(); });
-        return h('label', { class: 'check' }, inp, h('span', null, h('b', null, rights[c]), h('small', null, 'Right ' + c)));
+        return h('label', { class: 'check' }, inp, h('span', null, h('b', null, rights[c])));
       }));
+      // What they look after: everything, or the machines and servers picked. Their rights are for those only.
+      const multi = !!S.machines;
       const all = admin || st.rights.has('e');
-      swap(serversWrap, all ? h('div', { class: 'muted small' }, 'Sees every server.') :
-        h('div', { class: 'chips' }, S.servers.map(v => h('button', {
-          type: 'button', class: 'chip' + (st.servers.has(v.id) ? ' on' : ''),
-          onclick: e => { st.servers.has(v.id) ? st.servers.delete(v.id) : st.servers.add(v.id); e.currentTarget.classList.toggle('on'); },
-        }, v.name))));
+      const pick = (val, title, desc) => {
+        const inp = h('input', { type: 'radio', name: 'scope', checked: all === val });
+        inp.addEventListener('change', () => { val ? st.rights.add('e') : st.rights.delete('e'); renderRights(); });
+        return h('label', { class: 'check' }, inp, h('span', null, h('b', null, title), h('small', null, desc)));
+      };
+      const chip = v => {
+        const whole = st.machines.has(v.machine || '.');
+        return h('button', { type: 'button', class: 'chip' + (whole || st.servers.has(v.id) ? ' on' : ''), disabled: whole,
+          title: whole ? 'The whole machine is picked' : null,
+          onclick: e => { st.servers.has(v.id) ? st.servers.delete(v.id) : st.servers.add(v.id); e.currentTarget.classList.toggle('on'); } }, v.name);
+      };
+      // (only what the one signed in looks after: a machine whole when it is theirs whole, their servers otherwise)
+      const groups = !multi ? [h('div', { class: 'chips' }, S.servers.length ? S.servers.map(chip) : h('span', { class: 'muted small' }, 'No server yet.'))]
+        : S.machines.map(mc => {
+          const mid = mc.id || '.';
+          const list = S.servers.filter(v => (v.machine || '') === mc.id);
+          const whole = can('e') || (S.user.machines || []).includes(mid);
+          if (!whole && !list.length) return null;
+          const box = h('input', { type: 'checkbox', checked: st.machines.has(mid) });
+          box.addEventListener('change', () => { box.checked ? st.machines.add(mid) : st.machines.delete(mid); renderRights(); });
+          return h('div', { class: 'col', style: 'gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:10px' },
+            whole ? h('label', { class: 'check' }, box, h('span', null, h('b', null, icon('server'), ' ' + mc.name + (mc.local ? ' (this machine)' : '')),
+              h('small', null, 'The whole machine: every server on it, and those added to it later')))
+              : h('b', null, icon('server'), ' ' + mc.name + (mc.local ? ' (this machine)' : '')),
+            list.length ? h('div', { class: 'chips' }, list.map(chip)) : h('div', { class: 'muted small' }, 'No server on it yet.'));
+        });
+      if (admin) { swap(serversWrap, h('div', { class: 'muted small' }, multi ? 'An admin sees everything: every server of every machine.' : 'An admin sees every server.')); return; }
+      swap(serversWrap, h('div', { class: 'col', style: 'gap:10px' },
+        !can('e') ? null : h('div', { class: 'formgrid', style: 'grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px' },
+          pick(true, multi ? 'Everything (the hub)' : 'Every server', multi ? 'Every server of every machine, and the manager\'s own activity' : 'Those added later too, and the manager\'s own activity'),
+          pick(false, multi ? 'Only the machines or servers picked' : 'Only the servers picked', 'They see nothing else: no other server' + (multi ? ', no other machine' : ''))),
+        all ? null : groups,
+        all ? null : h('div', { class: 'hint' }, 'Their rights above are for what is picked here only. A right they do not have hides its pages (no Console tab without Console and RCON, no Files tab without Files).')));
     };
     renderRights();
     const err = h('div', { class: 'err' });
@@ -5330,8 +5443,13 @@ function pageUsers() {
     append(m.ft, h('button', { class: 'btn ghost', onclick: () => m.close() }, 'Cancel'),
       h('button', { class: 'btn primary', onclick: async () => {
         err.textContent = '';
+        const all = st.rights.has('a') || st.rights.has('e');
+        // what was picked: none when they see everything; a server of a machine picked whole is the machine's
+        const machines = all ? [] : [...st.machines];
+        const servers = all ? [] : [...st.servers].filter(id => !st.machines.has(machineOfId(id)));
+        if (isNew && S.servers.length && !all && !machines.length && !servers.length) { err.textContent = 'Pick what they look after: ' + (S.machines ? 'a machine, or a server.' : 'a server.'); return; }
         try {
-          await api('PUT', 'api/users/' + encodeURIComponent(nameIn.value.trim()), { rights: [...st.rights].join(''), servers: [...st.servers], password: pwIn.value });
+          await api('PUT', 'api/users/' + encodeURIComponent(nameIn.value.trim()), { rights: [...st.rights].join(''), servers, machines, password: pwIn.value });
           m.close();
           toast('Saved.', 'ok');
           load();

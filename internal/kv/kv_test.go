@@ -62,3 +62,25 @@ func TestNewGroupAndFile(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestDeleteMapGroup(t *testing.T) {
+	in := "\"GameModes_Server.txt\"\r\n{\r\n\t\"mapgroups\"\r\n\t{\r\n\t\t\"mg_a\"\r\n\t\t{\r\n\t\t\t\"name\" \"mg_a\"\r\n\t\t\t\"maps\"\r\n\t\t\t{\r\n\t\t\t\t\"de_dust2\" \"\"\r\n\t\t\t}\r\n\t\t}\r\n\t\t\"mg_b\" // its comment stays\r\n\t\t{\r\n\t\t\t\"maps\" { \"workshop/123/de_x\" \"\" }\r\n\t\t}\r\n\t}\r\n}\r\n"
+	out, ok := DeleteMapGroup(in, "MG_A")
+	if !ok {
+		t.Fatal("mg_a not found")
+	}
+	names, maps := MapGroups(out)
+	if len(names) != 1 || names[0] != "mg_b" || len(maps["mg_b"]) != 1 || maps["mg_b"][0] != "workshop/123/de_x" {
+		t.Fatalf("left: %v %v\n%s", names, maps, out)
+	}
+	if strings.Contains(out, "de_dust2") || !strings.Contains(out, "\t\t\"mg_b\" // its comment stays\r\n") {
+		t.Fatalf("text:\n%s", out)
+	}
+	if _, ok := DeleteMapGroup(out, "mg_none"); ok {
+		t.Fatal("a group that is not there was found")
+	}
+	out, _ = DeleteMapGroup(out, "mg_b")
+	if names, _ := MapGroups(out); len(names) != 0 {
+		t.Fatalf("left: %v\n%s", names, out)
+	}
+}

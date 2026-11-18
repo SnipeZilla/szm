@@ -280,3 +280,29 @@ func SetMapGroup(text, group string, maps []string) string {
 	}
 	return text[:from] + mapLines(maps, ind, nl) + text[to:]
 }
+
+// DeleteMapGroup gives the text without a map group (each block with its name, ignoring case), and whether there
+// was one. The rest of the text stays as it was.
+func DeleteMapGroup(text, group string) (string, bool) {
+	mg := mapGroups(Parse(text))
+	if mg == nil {
+		return text, false
+	}
+	found := false
+	for k := len(mg.Kids) - 1; k >= 0; k-- { // from the end: the positions before stay right
+		g := mg.Kids[k]
+		if !g.Block || !strings.EqualFold(g.Key, group) || g.close >= len(text) {
+			continue
+		}
+		found = true
+		from, to := g.start, g.close+1
+		if ls := lineStart(text, from); strings.TrimSpace(text[ls:from]) == "" {
+			from = ls // its lines, whole, when it has them to itself
+			if e := strings.IndexByte(text[to:], '\n'); e >= 0 && strings.TrimSpace(text[to:to+e]) == "" {
+				to += e + 1
+			}
+		}
+		text = text[:from] + text[to:]
+	}
+	return text, found
+}

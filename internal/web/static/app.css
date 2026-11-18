@@ -423,6 +423,10 @@ html.waiting, html.waiting * { cursor: progress !important; }
 .mapitem.current { background: var(--ok-soft); }
 .mapitem .idx { color: var(--muted); width: 22px; text-align: right; }
 .mapitem .btn { opacity: 0; }
+.mapitem .btn.play { color: var(--ok); } /* play now: green, apart from + (add to the group) */
+.mapitem .n small { font-size: 11px; }
+.mapsep { display: flex; align-items: center; gap: 6px; padding: 10px 10px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.mapsep svg { width: 13px; height: 13px; }
 .mapitem:hover .btn, .mapitem:focus-within .btn { opacity: 1; }
 
 /* Game picker */
@@ -858,3 +862,6 @@ ul.plain li { overflow-wrap: anywhere; min-width: 0; }
 .pkgupd { border-top: 1px solid var(--line); padding-top: 12px; }
 .pkgupd .note { padding: 7px 10px; border-radius: 8px; font-size: 12.5px; }
 .pkgupd .note .spin { display: inline-block; vertical-align: -2px; }
+.check input[type=radio] { border-radius: 50%; }
+.check b svg { width: 14px; height: 14px; vertical-align: -2px; }
+.chip:disabled { opacity: .65; cursor: default; }

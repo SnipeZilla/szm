@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/SnipeZilla/szm/internal/config"
+	"github.com/SnipeZilla/szm/internal/link"
 )
 
 // Rights of a user, the letters of the old manager:
@@ -55,6 +56,9 @@ type User struct {
 	Hash    string   `json:"hash"`
 	Rights  string   `json:"rights"`
 	Servers []string `json:"servers"` // the servers they look after (without e)
+	// the machines they look after, whole (without e): every server of each, those added later too. A linked
+	// machine by its ID, this one as ThisMachine. On a hub, a server of a linked machine is "machine~server".
+	Machines []string `json:"machines,omitempty"`
 	Created int64    `json:"created"`
 	LastIn  int64    `json:"last_login,omitempty"`
 }
@@ -64,9 +68,75 @@ func (u *User) Can(r string) bool {
 	return strings.Contains(u.Rights, "a") || strings.Contains(u.Rights, r)
 }
 
+// ThisMachine is this machine among those a user looks after (the linked ones go by their ID).
+const ThisMachine = "."
+
+// machineOf: the machine a server is on, by its ID ("us~css-1": us)
+func machineOf(id string) string {
+	if node, _, ok := strings.Cut(id, link.Sep); ok {
+		return node
+	}
+	return ThisMachine
+}
+
+// OnMachine tells whether a user has something to do on a machine: they see everything, look after it whole, or
+// look after one of its servers.
+func (u *User) OnMachine(machine string) bool {
+	if u.Can("e") || u.wholeMachine(machine) {
+		return true
+	}
+	for _, s := range u.Servers {
+		if machineOf(s) == machine {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *User) wholeMachine(machine string) bool {
+	for _, m := range u.Machines {
+		if m == machine {
+			return true
+		}
+	}
+	return false
+}
+
+// elsewhere: a user who looks after machines or servers, none of them here. What is this machine's own (its
+// settings, its addons, a new server on it) is not theirs.
+func (u *User) elsewhere() bool {
+	return !u.Can("e") && len(u.Machines)+len(u.Servers) > 0 && !u.OnMachine(ThisMachine)
+}
+
+// Manages tells whether a user (with the Users right) sees and changes another one: an admin does everyone;
+// otherwise themselves, and those who have no right and nothing to look after that they do not have themselves.
+func (u *User) Manages(x *User) bool {
+	if u.Can("a") || strings.EqualFold(u.Name, x.Name) {
+		return true
+	}
+	for _, c := range x.Rights {
+		if !u.Can(string(c)) {
+			return false
+		}
+	}
+	if !u.Can("e") {
+		for _, m := range x.Machines {
+			if !u.wholeMachine(m) {
+				return false
+			}
+		}
+		for _, id := range x.Servers {
+			if !u.Sees(id) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Sees tells whether a user sees a server.
 func (u *User) Sees(id string) bool {
-	if u.Can("e") {
+	if u.Can("e") || u.wholeMachine(machineOf(id)) {
 		return true
 	}
 	for _, s := range u.Servers {
@@ -218,7 +288,7 @@ func (u *Users) put(nu User, password string) error {
 	defer u.mu.Unlock()
 	for _, x := range u.list {
 		if strings.EqualFold(x.Name, nu.Name) {
-			x.Rights, x.Servers = nu.Rights, nu.Servers
+			x.Rights, x.Servers, x.Machines = nu.Rights, nu.Servers, nu.Machines
 			if password != "" {
 				x.Hash = hashPassword(password)
 			}

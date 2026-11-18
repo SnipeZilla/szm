@@ -96,7 +96,7 @@ func (s *Server) visible(u *User) []manager.View {
 func (s *Server) state(w http.ResponseWriter, r *http.Request, u *User) error {
 	return writeJSON(w, map[string]any{
 		"servers":  s.allVisible(u),
-		"machine":  s.M.MachineInfo(),
+		"machine":  s.machineFor(u),
 		"machines": s.machines(u),
 		"ui":       uiVersion,
 		"crashes":  s.crashes24h(u),
@@ -319,8 +319,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, u *User) error {
 			} else {
 				u = nu
 			}
-			st := map[string]any{"servers": s.allVisible(u), "machine": s.M.MachineInfo(), "machines": s.machines(u), "ui": uiVersion,
-				"crashes": s.crashes24h(u)}
+			st := map[string]any{"servers": s.allVisible(u), "machine": s.machineFor(u), "machines": s.machines(u), "ui": uiVersion,
+				"crashes": s.crashes24h(u), "user": s.me(u)} // (the user: their rights may have been changed)
 			b, _ := json.Marshal(st)
 			// Uptime of the manager changes every time: compare without it
 			cmp := bytes.ReplaceAll(b, []byte(`"uptime"`), nil)
@@ -632,7 +632,7 @@ func (s *Server) addServer(w http.ResponseWriter, r *http.Request, u *User) erro
 		return writeErrs(w, errs)
 	}
 	// Whoever adds a server looks after it
-	if !u.Can("e") {
+	if !u.Sees(sv.ID) {
 		u.Servers = append(u.Servers, sv.ID)
 		_ = s.users.put(*u, "")
 	}
@@ -1299,7 +1299,14 @@ func (s *Server) importOld(w http.ResponseWriter, r *http.Request, u *User) erro
  * ------------------------------------------------------------------------------------------------------------- */
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request, u *User) error {
-	return writeJSON(w, map[string]any{"users": s.users.all(), "rights": RightNames})
+	// the users they manage: not those who can do, or look after, more than they do
+	list := []User{}
+	for _, x := range s.users.all() {
+		if u.Manages(&x) {
+			list = append(list, x)
+		}
+	}
+	return writeJSON(w, map[string]any{"users": list, "rights": RightNames})
 }
 
 func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error {
@@ -1307,6 +1314,7 @@ func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error 
 	var in struct {
 		Rights   string   `json:"rights"`
 		Servers  []string `json:"servers"`
+		Machines []string `json:"machines"`
 		Password string   `json:"password"`
 	}
 	if err := readJSON(r, &in); err != nil {
@@ -1321,6 +1329,11 @@ func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error 
 			rights += string(c)
 		}
 	}
+	// nobody changes their own rights or what they look after (unticking Users, say, would lock them out): someone
+	// above them does. Their password: the Your account page.
+	if strings.EqualFold(strings.TrimSpace(name), u.Name) {
+		return fail(http.StatusForbidden, "You can not change your own rights: another user who manages you does. Your password is changed on the Your account page.")
+	}
 	// Only an admin makes admins, and gives rights they have
 	if !u.Can("a") {
 		for _, c := range rights {
@@ -1333,8 +1346,8 @@ func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error 
 	if old != nil && strings.Contains(old.Rights, "a") && !strings.Contains(rights, "a") && s.users.admins() <= 1 {
 		return fail(http.StatusConflict, "This is the last admin.")
 	}
-	if old != nil && strings.Contains(old.Rights, "a") && !u.Can("a") {
-		return errForbidden
+	if old != nil && !u.Manages(old) {
+		return errForbidden // (as an unknown name would be created: nothing said about who exists)
 	}
 	if in.Password != "" && len(in.Password) < 8 {
 		return fail(http.StatusBadRequest, "The password needs 8 characters or more.")
@@ -1342,7 +1355,30 @@ func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error 
 	if in.Servers == nil {
 		in.Servers = []string{}
 	}
-	if err := s.users.put(User{Name: strings.TrimSpace(name), Rights: rights, Servers: in.Servers}, in.Password); err != nil {
+	// the machines they look after: this one, or a linked one
+	var machines []string
+	for _, m := range in.Machines {
+		if _, known := s.links.Get().Node(m); (known || m == ThisMachine) && !(&User{Machines: machines}).wholeMachine(m) {
+			machines = append(machines, m)
+		}
+	}
+	// ... and nobody gives more to look after than they have themselves
+	if !u.Can("e") {
+		if strings.Contains(rights, "e") {
+			return fail(http.StatusForbidden, "You can not give every server: you do not look after them all.")
+		}
+		for _, m := range machines {
+			if !u.wholeMachine(m) {
+				return fail(http.StatusForbidden, "You can not give a machine you do not look after.")
+			}
+		}
+		for _, id := range in.Servers {
+			if !u.Sees(id) {
+				return fail(http.StatusForbidden, "You can not give a server you do not look after.")
+			}
+		}
+	}
+	if err := s.users.put(User{Name: strings.TrimSpace(name), Rights: rights, Servers: in.Servers, Machines: machines}, in.Password); err != nil {
 		return fail(http.StatusBadRequest, "%s", capitalize(err.Error()))
 	}
 	if in.Password != "" && old != nil {
@@ -1354,7 +1390,7 @@ func (s *Server) putUser(w http.ResponseWriter, r *http.Request, u *User) error 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request, u *User) error {
 	name := r.PathValue("name")
 	old := s.users.get(name)
-	if old == nil {
+	if old == nil || !u.Manages(old) {
 		return fail(http.StatusNotFound, "No such user.")
 	}
 	if strings.EqualFold(old.Name, u.Name) {

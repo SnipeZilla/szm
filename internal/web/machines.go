@@ -150,6 +150,10 @@ func (s *Server) remote(next http.Handler) http.Handler {
 			writeErr(w, fail(http.StatusNotFound, "No such server."))
 			return
 		}
+		if !u.OnMachine(node) {
+			writeErr(w, fail(http.StatusNotFound, "No such machine.")) // not one they look after
+			return
+		}
 		if r.URL.RawQuery != "" {
 			// the query too may name the machine's servers (?server=us~css-1)
 			q := strings.NewReplacer(node+link.Sep, "", node+"%7E", "", node+"%7e", "").Replace(r.URL.RawQuery)
@@ -166,6 +170,9 @@ func (s *Server) remote(next http.Handler) http.Handler {
 			r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(b)), int64(len(b))
 		}
 		lu := link.User{Name: u.Name + " (" + s.links.Get().Name + ")", Rights: u.Rights, Servers: []string{}}
+		if u.wholeMachine(node) && !u.Can("e") {
+			lu.Rights += "e" // the whole machine is theirs: there, they see every server
+		}
 		for _, id := range u.Servers {
 			if rest, found := strings.CutPrefix(id, node+link.Sep); found {
 				lu.Servers = append(lu.Servers, rest)
@@ -295,6 +302,16 @@ type machineView struct {
 	Version string          `json:"version,omitempty"`
 	Machine json.RawMessage `json:"machine,omitempty"`
 	Servers int             `json:"servers"`
+	Off     bool            `json:"off,omitempty"` // this machine, for a user whose machines and servers are all elsewhere: not theirs
+}
+
+// machineFor: this machine as a user's page shows it (its memory, disks, network...). For a user whose machines and
+// servers are all elsewhere, only the manager's version: this machine is not theirs to look at.
+func (s *Server) machineFor(u *User) manager.Machine {
+	if u.elsewhere() {
+		return manager.Machine{Version: manager.Version}
+	}
+	return s.M.MachineInfo()
 }
 
 // allVisible gives the servers a user sees: this machine's, then the linked machines'.
@@ -323,8 +340,11 @@ func (s *Server) machines(u *User) []machineView {
 	if len(f.Nodes) == 0 {
 		return nil
 	}
-	out := []machineView{{Name: f.Name, Local: true, Online: true, Linked: true, Version: manager.Version, Servers: len(s.visible(u))}}
+	out := []machineView{{Name: f.Name, Local: true, Online: true, Linked: true, Version: manager.Version, Servers: len(s.visible(u)), Off: u.elsewhere()}}
 	for _, n := range f.Nodes {
+		if !u.OnMachine(n.ID) {
+			continue // not a machine they look after: not shown
+		}
 		mv := machineView{ID: n.ID, Name: n.Name, Linked: n.Linked()}
 		on, since := s.hub.Online(n.ID)
 		mv.Online = on

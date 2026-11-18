@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +20,7 @@ import (
 	"github.com/SnipeZilla/szm/internal/events"
 	"github.com/SnipeZilla/szm/internal/games"
 	"github.com/SnipeZilla/szm/internal/kv"
+	"github.com/SnipeZilla/szm/internal/workshop"
 )
 
 // The file manager: everything stays inside the server's folder.
@@ -91,8 +94,8 @@ type fileEntry struct {
 
 var textExt = map[string]bool{
 	".cfg": true, ".txt": true, ".ini": true, ".log": true, ".json": true, ".vdf": true, ".res": true, ".gi": true, ".gam": true,
-	".lst": true, ".xml": true, ".yml": true, ".yaml": true, ".sp": true, ".inc": true, ".smx.txt": true, ".kv": true,
-	".properties": true, ".rc": true, ".bat": true, ".cmd": true, ".sh": true, ".md": true, ".csv": true,
+	".lst": true, ".xml": true, ".yml": true, ".yaml": true, ".sp": true, ".inc": true, ".smx.txt": true, ".kv": true, ".kv3": true,
+	".properties": true, ".rc": true, ".bat": true, ".cmd": true, ".sh": true, ".md": true, ".csv": true, ".acf": true,
 	".phrases.txt": true, ".db.txt": true, ".conf": true, ".toml": true, ".lua": true, ".nut": true, ".js": true,
 	".htm": true, ".html": true, ".css": true, ".inf": true, ".mapcycle": true, ".wiki": true, ".rad": true,
 }
@@ -643,6 +646,7 @@ func (s *Server) maps(w http.ResponseWriter, r *http.Request, u *User) error {
 		}
 		out["workshop"], out["workshop_map"], out["workshop_collection"], out["workshop_collection_title"] = ws, sv.WorkshopStart, sv.WorkshopColl, sv.WorkshopCollFor
 		out["workshop_collections"] = sv.Collections()
+		out["workshop_names"] = workshopNames(sv, g)
 	}
 	if g.Engine == games.Source2 {
 		rel := gameModesPath(g)
@@ -688,6 +692,109 @@ func (s *Server) maps(w http.ResponseWriter, r *http.Request, u *User) error {
 	}
 	out["not_found"] = gone
 	return writeJSON(w, out)
+}
+
+// workshopDirs: where a CS2 server keeps the Workshop items it downloaded (one folder for each, by its ID)
+var workshopDirs = []string{"game/bin/win64/steamapps/workshop/content/730", "game/bin/linuxsteamrt64/steamapps/workshop/content/730"}
+
+// workshopNames gives the map name of each Workshop map a CS2 server has downloaded, by its ID: a map group lists
+// it as workshop/ID/name. The name is the map's own (maps/awp_lego_3.vpk, inside the item's .vpk: not its title on
+// the Workshop, nor the name of the file, often the ID). A map not downloaded yet is not there.
+func workshopNames(sv config.Server, g *games.Game) map[string]string {
+	out := map[string]string{}
+	for _, d := range workshopDirs {
+		items, _ := os.ReadDir(g.Path(sv.InstallDir, d))
+		for _, it := range items {
+			if !it.IsDir() || workshop.ParseID(it.Name()) != it.Name() || out[it.Name()] != "" {
+				continue
+			}
+			dir := filepath.Join(g.Path(sv.InstallDir, d), it.Name())
+			files, _ := os.ReadDir(dir)
+			fallback := ""
+			for _, f := range files {
+				name := f.Name()
+				if f.IsDir() || !strings.EqualFold(filepath.Ext(name), ".vpk") {
+					continue
+				}
+				if m := vpkMapName(filepath.Join(dir, name)); m != "" {
+					out[it.Name()] = m
+					break
+				}
+				// not readable as a .vpk holding a map: the file's own name, when it is one (de_warden.vpk)
+				name = strings.TrimSuffix(strings.TrimSuffix(name, filepath.Ext(name)), "_dir")
+				if fallback == "" && !isPart(name) && !strings.Contains(name, "_vanity") && workshop.ParseID(name) == "" && !strings.ContainsAny(name, " \"{}") {
+					fallback = name
+				}
+			}
+			if out[it.Name()] == "" && fallback != "" {
+				out[it.Name()] = fallback
+			}
+		}
+	}
+	return out
+}
+
+// vpkMapName reads the list of files of a .vpk (its directory, at its start) and gives the map in it: maps/NAME.vpk.
+// "" when it is not a .vpk directory, or holds no map.
+func vpkMapName(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var hdr [12]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil || binary.LittleEndian.Uint32(hdr[0:]) != 0x55aa1234 {
+		return ""
+	}
+	size := int64(binary.LittleEndian.Uint32(hdr[8:]))
+	if binary.LittleEndian.Uint32(hdr[4:]) == 2 {
+		if _, err := f.Seek(16, io.SeekCurrent); err != nil { // version 2: four more sizes
+			return ""
+		}
+	}
+	r := bufio.NewReader(io.LimitReader(f, min(size, 64<<20)))
+	str := func() (string, bool) {
+		b, err := r.ReadBytes(0)
+		if err != nil {
+			return "", false
+		}
+		return string(b[:len(b)-1]), true
+	}
+	// by extension, then folder, then name; each list ends with an empty one
+	for {
+		ext, ok := str()
+		if !ok || ext == "" {
+			return ""
+		}
+		for {
+			dir, ok := str()
+			if !ok {
+				return ""
+			}
+			if dir == "" {
+				break
+			}
+			for {
+				name, ok := str()
+				if !ok {
+					return ""
+				}
+				if name == "" {
+					break
+				}
+				if strings.EqualFold(ext, "vpk") && strings.EqualFold(dir, "maps") && !isPart(name) && !strings.Contains(name, "_vanity") && !strings.ContainsAny(name, " \"{}/") {
+					return name
+				}
+				var e [18]byte // its entry: ..., the bytes kept with it (at 4), ...
+				if _, err := io.ReadFull(r, e[:]); err != nil {
+					return ""
+				}
+				if _, err := r.Discard(int(binary.LittleEndian.Uint16(e[4:]))); err != nil {
+					return ""
+				}
+			}
+		}
+	}
 }
 
 // isPart: "de_foo_001" style pieces of a map split in several .vpk
@@ -759,6 +866,13 @@ func (s *Server) saveMapGroup(w http.ResponseWriter, sv config.Server, g *games.
 			list = append(list, m)
 		}
 	}
+	// a Workshop map (workshop/ID/name): under the name the server has it, when it has it
+	names := workshopNames(sv, g)
+	for k, m := range list {
+		if parts := strings.Split(m, "/"); len(parts) == 3 && strings.EqualFold(parts[0], "workshop") && names[parts[1]] != "" {
+			list[k] = "workshop/" + parts[1] + "/" + names[parts[1]]
+		}
+	}
 	rel := gameModesPath(g)
 	p := g.Path(sv.InstallDir, rel)
 	b, err := os.ReadFile(p)
@@ -775,4 +889,37 @@ func (s *Server) saveMapGroup(w http.ResponseWriter, sv config.Server, g *games.
 		return fail(http.StatusBadRequest, "%s.", capitalize(err.Error()))
 	}
 	return writeJSON(w, map[string]any{"ok": true, "saved": time.Now().Unix(), "group": group, "args_changed": changed})
+}
+
+// deleteMapGroup takes a map group out of a CS2 server's gamemodes_server.txt. Not the one it plays (+mapgroup):
+// it would start with no group.
+func (s *Server) deleteMapGroup(w http.ResponseWriter, r *http.Request, u *User) error {
+	sv, g, err := s.serverDir(r)
+	if err != nil {
+		return err
+	}
+	if g == nil || g.Engine != games.Source2 {
+		return fail(http.StatusBadRequest, "Only a CS2 server has map groups.")
+	}
+	group := r.PathValue("group")
+	if !mapGroupRe.MatchString(group) {
+		return fail(http.StatusBadRequest, "No such map group.")
+	}
+	if strings.EqualFold(config.ArgValue(sv.Args, "+mapgroup"), group) {
+		return fail(http.StatusBadRequest, "The server plays %s (+mapgroup): pick another group and save it first.", group)
+	}
+	p := g.Path(sv.InstallDir, gameModesPath(g))
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return fail(http.StatusNotFound, "No map group %s in %s.", group, gameModesPath(g))
+	}
+	text, ok := kv.DeleteMapGroup(string(b), group)
+	if !ok {
+		return fail(http.StatusNotFound, "No map group %s in %s.", group, gameModesPath(g))
+	}
+	if err := config.WriteFileAtomic(p, []byte(text), 0o644); err != nil {
+		return err
+	}
+	s.M.Log.Add(events.Info, sv.ID, sv.Name, "%s deleted the map group %s", u.Name, group)
+	return writeJSON(w, map[string]any{"ok": true})
 }
